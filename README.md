@@ -1,8 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/MCP-Server-blue?style=for-the-badge&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0id2hpdGUiPjxwYXRoIGQ9Ik0xMiAyQzYuNDggMiAyIDYuNDggMiAxMnM0LjQ4IDEwIDEwIDEwIDEwLTQuNDggMTAtMTBTMTcuNTIgMiAxMiAyem0wIDE4Yy00LjQyIDAtOC0zLjU4LTgtOHMzLjU4LTggOC04IDggMy41OCA4IDgtMy41OCA4LTggOHoiLz48L3N2Zz4=" alt="MCP Server">
-  <img src="https://img.shields.io/badge/TypeScript-007ACC?style=for-the-badge&logo=typescript&logoColor=white" alt="TypeScript">
-  <img src="https://img.shields.io/badge/J--Link-SEGGER-00979D?style=for-the-badge" alt="J-Link">
-  <img src="https://img.shields.io/badge/ARM-Cortex--M-0091BD?style=for-the-badge" alt="ARM Cortex-M">
+  <img src="logo.png" alt="jlink-mcp logo" width="200">
 </p>
 
 <h1 align="center">jlink-mcp</h1>
@@ -10,6 +7,13 @@
 <p align="center">
   <strong>Give AI hands to touch silicon.</strong><br>
   An MCP server that lets LLMs debug embedded devices through SEGGER J-Link probes.
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/MCP-Server-blue?style=for-the-badge" alt="MCP Server">
+  <img src="https://img.shields.io/badge/TypeScript-007ACC?style=for-the-badge&logo=typescript&logoColor=white" alt="TypeScript">
+  <img src="https://img.shields.io/badge/J--Link-SEGGER-00979D?style=for-the-badge" alt="J-Link">
+  <img src="https://img.shields.io/badge/ARM-Cortex--M-0091BD?style=for-the-badge" alt="ARM Cortex-M">
 </p>
 
 <p align="center">
