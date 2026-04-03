@@ -4,6 +4,31 @@
  * implements this interface. The MCP server calls only these methods.
  */
 
+// ══════════════════════════════════════════════════════════════════════
+// State machine
+// ══════════════════════════════════════════════════════════════════════
+
+export enum ProbeState {
+  DISCONNECTED = "disconnected",
+  PROBE_CONNECTED = "probe_connected",
+  TARGET_ATTACHED = "target_attached",
+  GDB_RUNNING = "gdb_running",
+}
+
+/** Structured error codes returned by probe operations */
+export enum ProbeErrorCode {
+  PROBE_NOT_FOUND = "PROBE_NOT_FOUND",
+  TARGET_UNREACHABLE = "TARGET_UNREACHABLE",
+  ATTACH_FAILED = "ATTACH_FAILED",
+  ATTACH_UNDER_RESET_FAILED = "ATTACH_UNDER_RESET_FAILED",
+  STATE_DESYNC = "STATE_DESYNC",
+  DEVICE_NOT_CONFIGURED = "DEVICE_NOT_CONFIGURED",
+  GDB_SERVER_FAILED = "GDB_SERVER_FAILED",
+  RTT_NOT_AVAILABLE = "RTT_NOT_AVAILABLE",
+  TIMEOUT = "TIMEOUT",
+  PROBE_BUSY = "PROBE_BUSY",
+}
+
 export interface CommandResult {
   success: boolean;
   /** Raw output from the probe tool */
@@ -11,6 +36,12 @@ export interface CommandResult {
   /** Cleaned output (boilerplate stripped) */
   output: string;
   error?: string;
+  /** Structured error code for programmatic handling */
+  errorCode?: ProbeErrorCode;
+  /** What stage succeeded before failure */
+  lastSuccessfulStage?: string;
+  /** Suggested recovery action */
+  suggestedAction?: string;
 }
 
 export interface MemoryDumpLine {
@@ -26,6 +57,15 @@ export interface GDBServerInfo {
   rttTelnetPort: number;
 }
 
+export interface ProbeStatus {
+  state: ProbeState;
+  probeType: ProbeType;
+  deviceConfigured: boolean;
+  deviceName: string;
+  gdbServer: GDBServerInfo;
+  rttConnected: boolean;
+}
+
 export type ProbeType = "jlink" | "openocd" | "blackmagic" | "probe-rs";
 
 /**
@@ -37,6 +77,142 @@ export type ProbeType = "jlink" | "openocd" | "blackmagic" | "probe-rs";
 export abstract class ProbeBackend {
   abstract readonly type: ProbeType;
   abstract readonly displayName: string;
+
+  // ── State machine ────────────────────────────────────────────────
+
+  protected _state: ProbeState = ProbeState.DISCONNECTED;
+  private _rttConnected = false;
+  private _lock: Promise<void> = Promise.resolve();
+
+  get state(): ProbeState { return this._state; }
+
+  get rttConnected(): boolean { return this._rttConnected; }
+  set rttConnected(v: boolean) {
+    // RTT can only be connected if GDB server is running
+    if (v && this._state !== ProbeState.GDB_RUNNING) {
+      this._rttConnected = false;
+      return;
+    }
+    this._rttConnected = v;
+  }
+
+  /** Transition state with validation */
+  protected setState(newState: ProbeState): void {
+    this._state = newState;
+    // If we lose target attach, RTT is invalid
+    if (newState === ProbeState.DISCONNECTED || newState === ProbeState.PROBE_CONNECTED) {
+      this._rttConnected = false;
+    }
+  }
+
+  getStatus(): ProbeStatus {
+    return {
+      state: this._state,
+      probeType: this.type,
+      deviceConfigured: this.isDeviceConfigured(),
+      deviceName: this.getDeviceName(),
+      gdbServer: this.getGDBServerStatus(),
+      rttConnected: this._rttConnected,
+    };
+  }
+
+  /**
+   * Acquire exclusive access to the probe. Prevents concurrent commands
+   * from racing the same J-Link session.
+   */
+  protected async acquireLock<T>(fn: () => Promise<T>): Promise<T> {
+    const prev = this._lock;
+    let releaseFn: () => void;
+    this._lock = new Promise<void>((resolve) => { releaseFn = resolve; });
+    await prev;
+    try {
+      return await fn();
+    } finally {
+      releaseFn!();
+    }
+  }
+
+  /**
+   * Preflight check: verify target is reachable by reading DHCSR.
+   * Returns null if OK, or an error CommandResult if unreachable.
+   * Subclasses can override for probe-specific preflight.
+   */
+  async preflight(): Promise<CommandResult | null> {
+    // Read Debug Halting Control and Status Register
+    const result = await this.readMemory(0xE000EDF0, 4);
+    if (!result.success) {
+      return {
+        success: false,
+        rawOutput: result.rawOutput,
+        output: "Preflight failed: cannot read DHCSR (0xE000EDF0). Target may be unreachable.",
+        error: result.error,
+        errorCode: ProbeErrorCode.TARGET_UNREACHABLE,
+        lastSuccessfulStage: "probe_connected",
+        suggestedAction: "Try reset({halt: true}) or use the recovery tool. Check SWD/JTAG wiring.",
+      };
+    }
+    this.setState(ProbeState.TARGET_ATTACHED);
+    return null;
+  }
+
+  /**
+   * Run a command with preflight validation and auto-recovery.
+   * Wraps the command in a lock to prevent concurrent access.
+   */
+  async withPreflight(
+    operation: string,
+    fn: () => Promise<CommandResult>,
+    skipPreflight = false
+  ): Promise<CommandResult> {
+    return this.acquireLock(async () => {
+      if (!skipPreflight && this.isDeviceConfigured()) {
+        const check = await this.preflight();
+        if (check) {
+          // Try recovery once
+          const recovered = await this.recover();
+          if (!recovered) {
+            return {
+              ...check,
+              lastSuccessfulStage: "recovery_attempted",
+              suggestedAction: `Recovery failed. Try: 1) reset with halt, 2) power cycle the target, 3) check SWD wiring. Operation was: ${operation}`,
+            };
+          }
+        }
+      }
+
+      const result = await fn();
+
+      // Update state based on result
+      if (result.success && this._state === ProbeState.DISCONNECTED) {
+        this.setState(ProbeState.TARGET_ATTACHED);
+      }
+      if (!result.success && result.rawOutput) {
+        // Detect common failure patterns and classify
+        const raw = result.rawOutput.toLowerCase();
+        if (raw.includes("cannot connect") || raw.includes("inittarget() returned error") || raw.includes("could not connect")) {
+          result.errorCode = result.errorCode || ProbeErrorCode.TARGET_UNREACHABLE;
+          result.suggestedAction = result.suggestedAction || "Target unreachable. Try: reset with halt, reduce SWD speed, or power cycle.";
+          this.setState(ProbeState.PROBE_CONNECTED);
+        }
+        if (raw.includes("failed to open dll") || raw.includes("no j-link found") || raw.includes("could not find")) {
+          result.errorCode = result.errorCode || ProbeErrorCode.PROBE_NOT_FOUND;
+          result.suggestedAction = result.suggestedAction || "No probe found. Check USB connection.";
+          this.setState(ProbeState.DISCONNECTED);
+        }
+      }
+
+      return result;
+    });
+  }
+
+  /**
+   * Recovery sequence. Subclasses should override to implement
+   * probe-specific recovery (restart server, reconnect under reset, etc.)
+   * Returns true if recovery succeeded.
+   */
+  async recover(): Promise<boolean> {
+    return false;
+  }
 
   // ── Device control ───────────────────────────────────────────────
 

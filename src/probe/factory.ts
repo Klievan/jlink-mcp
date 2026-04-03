@@ -36,7 +36,7 @@ export function createProbeBackend(
   }
 }
 
-export { ProbeBackend, ProbeType, CommandResult, GDBServerInfo, MemoryDumpLine } from "./backend";
+export { ProbeBackend, ProbeType, ProbeState, ProbeErrorCode, ProbeStatus, CommandResult, GDBServerInfo, MemoryDumpLine } from "./backend";
 export { JLinkBackend, JLinkConfig } from "./jlink";
 export { OpenOCDBackend, OpenOCDConfig } from "./openocd";
 export { BlackMagicBackend, BlackMagicConfig } from "./blackmagic";

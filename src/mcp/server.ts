@@ -32,7 +32,7 @@ export class JLinkMcpServer {
 
     this.server = new McpServer({
       name: "jlink-mcp",
-      version: "0.1.3",
+      version: "0.2.0",
     });
 
     this.registerTools();
@@ -117,10 +117,13 @@ export class JLinkMcpServer {
 
         if (probe.supportsRTT() && !this.rttClient.isConnected()) {
           try {
+            this.rttClient.clearBuffer(); // Clear stale buffers from previous sessions
             await this.rttClient.connect();
+            probe.rttConnected = true;
             steps.push(`RTT: connected (port ${probe.getRTTPort()})`);
             await sleep(1500);
           } catch (err) {
+            probe.rttConnected = false;
             steps.push(`RTT: failed - ${err instanceof Error ? err.message : String(err)}`);
           }
         } else if (!probe.supportsRTT()) {
@@ -419,12 +422,12 @@ export class JLinkMcpServer {
     );
 
     this.server.tool("gdb_server_stop", `Stop ${probe.displayName} GDB server and disconnect RTT`, {},
-      async () => { this.rttClient.disconnect(); const r = probe.stopGDBServer(); return { content: [{ type: "text", text: r.message }] }; }
+      async () => { this.rttClient.disconnect(); probe.rttConnected = false; const r = probe.stopGDBServer(); return { content: [{ type: "text", text: r.message }] }; }
     );
 
     this.server.tool("gdb_server_status", "Get GDB server, RTT, and telnet proxy status", {},
       async () => {
-        const status = { probe: probe.displayName, gdbServer: probe.getGDBServerStatus(), rtt: this.rttClient.getStats(), telnetProxy: this.telnetProxy.getStatus() };
+        const status = { probeState: probe.getStatus(), rtt: this.rttClient.getStats(), telnetProxy: this.telnetProxy.getStatus() };
         return { content: [{ type: "text", text: JSON.stringify(status, null, 2) }] };
       }
     );
@@ -436,13 +439,19 @@ export class JLinkMcpServer {
     this.server.tool("rtt_connect", `Connect to RTT${probe.supportsRTT() ? "" : " (not supported by " + probe.displayName + ")"}`, {},
       async () => {
         if (!probe.supportsRTT()) return { content: [{ type: "text", text: `RTT is not supported by ${probe.displayName}` }] };
-        try { await this.rttClient.connect(); return { content: [{ type: "text", text: "Connected to RTT" }] }; }
-        catch (err) { return { content: [{ type: "text", text: `Failed: ${err instanceof Error ? err.message : String(err)}` }] }; }
+        if (!probe.isGDBServerRunning()) return { content: [{ type: "text", text: "GDB server must be running for RTT. Use start_debug_session or gdb_server_start first." }] };
+        try {
+          this.rttClient.clearBuffer();
+          await this.rttClient.connect();
+          probe.rttConnected = true;
+          return { content: [{ type: "text", text: "Connected to RTT" }] };
+        }
+        catch (err) { probe.rttConnected = false; return { content: [{ type: "text", text: `Failed: ${err instanceof Error ? err.message : String(err)}` }] }; }
       }
     );
 
     this.server.tool("rtt_disconnect", "Disconnect from RTT", {},
-      async () => { this.rttClient.disconnect(); return { content: [{ type: "text", text: "Disconnected from RTT" }] }; }
+      async () => { this.rttClient.disconnect(); probe.rttConnected = false; return { content: [{ type: "text", text: "Disconnected from RTT" }] }; }
     );
 
     this.server.tool("rtt_read", "Read recent RTT log lines (clean, parsed Zephyr format)",

@@ -1,5 +1,5 @@
 import { spawn } from "child_process";
-import { ProbeBackend, CommandResult, GDBServerInfo } from "./backend";
+import { ProbeBackend, ProbeState, ProbeErrorCode, CommandResult, GDBServerInfo } from "./backend";
 import { ProcessManager } from "../utils/process-manager";
 import { log, logError } from "../utils/logger";
 import * as path from "path";
@@ -94,12 +94,16 @@ export class JLinkBackend extends ProbeBackend {
     return this.config.installDir ? path.join(this.config.installDir, exe) : exe;
   }
 
-  /** Core execution: spawn JLinkExe with commands piped to stdin */
-  private async exec(commands: string[]): Promise<CommandResult> {
+  /**
+   * Raw JLinkExe execution. Does NOT include preflight/locking.
+   * Use the public methods (which call withPreflight) instead.
+   */
+  private async execRaw(commands: string[], speedOverride?: number): Promise<CommandResult> {
+    const speed = speedOverride ?? this.config.speed;
     const args = [
       "-device", this.config.device,
       "-if", this.config.interface,
-      "-speed", String(this.config.speed),
+      "-speed", String(speed),
       "-autoconnect", "1",
       "-ExitOnError", "1",
       "-NoGui", "1",
@@ -108,7 +112,7 @@ export class JLinkBackend extends ProbeBackend {
       args.push("-SelectEmuBySN", this.config.serialNumber);
     }
 
-    log(`[J-Link] ${commands.join("; ")}`);
+    log(`[J-Link] ${commands.join("; ")}${speedOverride ? ` (speed=${speed})` : ""}`);
 
     return new Promise<CommandResult>((resolve) => {
       const proc = spawn(this.jlinkExe, args, { stdio: ["pipe", "pipe", "pipe"] });
@@ -122,50 +126,127 @@ export class JLinkBackend extends ProbeBackend {
 
       proc.on("error", (err) => {
         logError("J-Link spawn error", err);
-        resolve({ success: false, rawOutput: stdout, output: stdout, error: `Failed to spawn JLinkExe: ${err.message}` });
+        this.setState(ProbeState.DISCONNECTED);
+        resolve({ success: false, rawOutput: stdout, output: stdout, error: `Failed to spawn JLinkExe: ${err.message}`, errorCode: ProbeErrorCode.PROBE_NOT_FOUND });
       });
       proc.on("exit", (code) => {
         if (code !== 0) logError(`J-Link exited with code ${code}`);
-        resolve({ success: code === 0, rawOutput: stdout, output: stripBoilerplate(stdout), error: stderr || undefined });
+        const result: CommandResult = { success: code === 0, rawOutput: stdout, output: stripBoilerplate(stdout), error: stderr || undefined };
+        // Classify errors from output
+        if (!result.success) {
+          const raw = stdout.toLowerCase();
+          if (raw.includes("inittarget() returned error") || raw.includes("could not connect") || raw.includes("cannot connect")) {
+            result.errorCode = ProbeErrorCode.TARGET_UNREACHABLE;
+            result.lastSuccessfulStage = "probe_connected";
+            result.suggestedAction = "Target attach failed. Try: reset with halt, reduce speed, or power cycle.";
+          } else if (raw.includes("failed to open dll") || raw.includes("no j-link") || raw.includes("no emulators found")) {
+            result.errorCode = ProbeErrorCode.PROBE_NOT_FOUND;
+            result.suggestedAction = "No J-Link probe found. Check USB connection.";
+          }
+        }
+        resolve(result);
       });
 
       setTimeout(() => {
         proc.kill("SIGTERM");
-        resolve({ success: false, rawOutput: stdout, output: stripBoilerplate(stdout), error: "J-Link timed out after 30s" });
+        resolve({ success: false, rawOutput: stdout, output: stripBoilerplate(stdout), error: "J-Link timed out after 30s", errorCode: ProbeErrorCode.TIMEOUT });
       }, 30000);
     });
   }
 
-  // ── ProbeBackend implementation ──────────────────────────────────
+  /**
+   * Deterministic recovery sequence:
+   * 1. Stop GDB server if running
+   * 2. Try connect under reset
+   * 3. If that fails, reduce speed (4000 → 1000 → 400) and retry
+   */
+  async recover(): Promise<boolean> {
+    log("[J-Link] Starting recovery sequence");
 
-  async getDeviceInfo(): Promise<CommandResult> { return this.exec(["halt", "regs"]); }
-  async halt(): Promise<CommandResult> { return this.exec(["halt"]); }
-  async resume(): Promise<CommandResult> { return this.exec(["go"]); }
-  async reset(halt = false): Promise<CommandResult> { return this.exec(halt ? ["r", "halt"] : ["r", "go"]); }
-  async step(): Promise<CommandResult> { return this.exec(["halt", "s"]); }
+    // Stop GDB server to release the probe
+    if (this.isGDBServerRunning()) {
+      log("[J-Link] Recovery: stopping GDB server");
+      this.stopGDBServer();
+      await sleep(1000);
+    }
+
+    // Try connect under reset at various speeds
+    const speeds = [this.config.speed, 1000, 400];
+    for (const speed of speeds) {
+      log(`[J-Link] Recovery: trying connect under reset at ${speed} kHz`);
+      const result = await this.execRaw(["r", "halt", "sleep 200", "regs"], speed);
+      if (result.success) {
+        log(`[J-Link] Recovery succeeded at ${speed} kHz`);
+        if (speed !== this.config.speed) {
+          log(`[J-Link] Keeping reduced speed: ${speed} kHz (was ${this.config.speed})`);
+          this.config.speed = speed;
+        }
+        this.setState(ProbeState.TARGET_ATTACHED);
+        return true;
+      }
+    }
+
+    log("[J-Link] Recovery failed at all speeds");
+    this.setState(ProbeState.PROBE_CONNECTED);
+    return false;
+  }
+
+  // ── ProbeBackend implementation ──────────────────────────────────
+  // All target-touching methods go through withPreflight for
+  // automatic validation, locking, and recovery.
+
+  async getDeviceInfo(): Promise<CommandResult> {
+    return this.withPreflight("getDeviceInfo", () => this.execRaw(["halt", "regs"]));
+  }
+  async halt(): Promise<CommandResult> {
+    return this.withPreflight("halt", () => this.execRaw(["halt"]));
+  }
+  async resume(): Promise<CommandResult> {
+    return this.withPreflight("resume", () => this.execRaw(["go"]));
+  }
+  async reset(halt = false): Promise<CommandResult> {
+    // Reset doesn't need preflight — it IS the recovery action
+    return this.acquireLock(() => this.execRaw(halt ? ["r", "halt"] : ["r", "go"]));
+  }
+  async step(): Promise<CommandResult> {
+    return this.withPreflight("step", () => this.execRaw(["halt", "s"]));
+  }
 
   async readMemory(address: number, length: number): Promise<CommandResult> {
-    return this.exec([`mem 0x${address.toString(16)}, ${length}`]);
+    // Skip preflight when reading DHCSR (that IS the preflight)
+    const isDHCSR = address === 0xE000EDF0;
+    if (isDHCSR) return this.acquireLock(() => this.execRaw([`mem 0x${address.toString(16)}, ${length}`]));
+    return this.withPreflight("readMemory", () => this.execRaw([`mem 0x${address.toString(16)}, ${length}`]));
   }
   async writeMemory(address: number, value: number): Promise<CommandResult> {
-    return this.exec([`w4 0x${address.toString(16)}, 0x${value.toString(16)}`]);
+    return this.withPreflight("writeMemory", () => this.execRaw([`w4 0x${address.toString(16)}, 0x${value.toString(16)}`]));
   }
 
-  async readAllRegisters(): Promise<CommandResult> { return this.exec(["halt", "regs"]); }
-  async readRegister(name: string): Promise<CommandResult> { return this.exec(["halt", `rreg ${name}`]); }
+  async readAllRegisters(): Promise<CommandResult> {
+    return this.withPreflight("readAllRegisters", () => this.execRaw(["halt", "regs"]));
+  }
+  async readRegister(name: string): Promise<CommandResult> {
+    return this.withPreflight("readRegister", () => this.execRaw(["halt", `rreg ${name}`]));
+  }
 
   async flash(filePath: string, baseAddress?: number): Promise<CommandResult> {
     const addr = baseAddress !== undefined ? ` 0x${baseAddress.toString(16)}` : "";
-    return this.exec(["r", "halt", `loadfile ${filePath}${addr}`, "r", "go"]);
+    return this.withPreflight("flash", () => this.execRaw(["r", "halt", `loadfile ${filePath}${addr}`, "r", "go"]));
   }
-  async erase(): Promise<CommandResult> { return this.exec(["erase"]); }
+  async erase(): Promise<CommandResult> {
+    return this.withPreflight("erase", () => this.execRaw(["erase"]));
+  }
 
   async setBreakpoint(address: number): Promise<CommandResult> {
-    return this.exec([`SetBP 0x${address.toString(16)}`]);
+    return this.withPreflight("setBreakpoint", () => this.execRaw([`SetBP 0x${address.toString(16)}`]));
   }
-  async clearBreakpoints(): Promise<CommandResult> { return this.exec(["ClrBP"]); }
+  async clearBreakpoints(): Promise<CommandResult> {
+    return this.withPreflight("clearBreakpoints", () => this.execRaw(["ClrBP"]));
+  }
 
-  async executeRaw(commands: string[]): Promise<CommandResult> { return this.exec(commands); }
+  async executeRaw(commands: string[]): Promise<CommandResult> {
+    return this.withPreflight("executeRaw", () => this.execRaw(commands));
+  }
 
   // ── GDB Server ───────────────────────────────────────────────────
 
@@ -200,6 +281,7 @@ export class JLinkBackend extends ProbeBackend {
           this.gdbOutputBuffer.push(`[ERR] ${line}`);
         }
       });
+      this.setState(ProbeState.GDB_RUNNING);
       return { success: true, message: `GDB Server started on port ${this.config.gdbPort}, RTT telnet on port ${this.config.rttTelnetPort}` };
     } catch (err) {
       logError("Failed to start GDB Server", err);
@@ -210,6 +292,8 @@ export class JLinkBackend extends ProbeBackend {
   stopGDBServer(): { success: boolean; message: string } {
     const killed = this.processManager.kill(GDB_SERVER_PROCESS);
     this.gdbOutputBuffer = [];
+    this.rttConnected = false;
+    if (killed) this.setState(ProbeState.PROBE_CONNECTED);
     return { success: true, message: killed ? "GDB Server stopped" : "GDB Server was not running" };
   }
 
@@ -263,5 +347,10 @@ export class JLinkBackend extends ProbeBackend {
 
   dispose(): void {
     this.processManager.kill(GDB_SERVER_PROCESS);
+    this.setState(ProbeState.DISCONNECTED);
   }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
