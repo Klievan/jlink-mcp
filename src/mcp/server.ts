@@ -32,7 +32,7 @@ export class JLinkMcpServer {
 
     this.server = new McpServer({
       name: "jlink-mcp",
-      version: "0.2.0",
+      version: "0.2.1",
     });
 
     this.registerTools();

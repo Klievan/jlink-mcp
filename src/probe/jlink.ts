@@ -191,6 +191,27 @@ export class JLinkBackend extends ProbeBackend {
     return false;
   }
 
+  /**
+   * Override preflight to use execRaw directly (avoids deadlock since
+   * preflight is called inside acquireLock from withPreflight).
+   */
+  async preflight(): Promise<CommandResult | null> {
+    const result = await this.execRaw([`mem 0xE000EDF0, 4`]);
+    if (!result.success) {
+      return {
+        success: false,
+        rawOutput: result.rawOutput,
+        output: "Preflight failed: cannot read DHCSR. Target may be unreachable.",
+        error: result.error,
+        errorCode: ProbeErrorCode.TARGET_UNREACHABLE,
+        lastSuccessfulStage: "probe_connected",
+        suggestedAction: "Try reset with halt, reduce SWD speed, or power cycle.",
+      };
+    }
+    this.setState(ProbeState.TARGET_ATTACHED);
+    return null;
+  }
+
   // ── ProbeBackend implementation ──────────────────────────────────
   // All target-touching methods go through withPreflight for
   // automatic validation, locking, and recovery.
