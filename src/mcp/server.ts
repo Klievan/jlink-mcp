@@ -668,25 +668,31 @@ export class JLinkMcpServer {
         messages: [{ role: "user", content: { type: "text", text:
 `You are an embedded debugging assistant with a ${probeName} debug probe.
 
-## Quick start
-Call start_debug_session first.
+## IMPORTANT: Device setup
+If no device is configured, you MUST do this first:
+1. Call **list_devices** to scan for connected probes
+2. Call **set_device** with the target name (e.g., "nRF52840_XXAA", "STM32F407VG", "STM32L073RZ")
+Then call **start_debug_session** to begin.
 
 ## Key tools:
-- **start_debug_session** - One-call setup, returns boot log
+- **list_devices** - Scan for connected probes (always works, even without device set)
+- **set_device** - Set target device name (REQUIRED before debugging)
+- **start_debug_session** - One-call setup: GDB server + RTT + boot log
 - **snapshot** - Full device state in one call
 - **diagnose_crash** - Auto-decode fault registers
+- **gdb_connect** / **gdb_command** - Full GDB debugging (source-level with .elf symbols)
+- **gdb_load** - Load .elf for symbols (set flash=true to also program)
 - **rtt_read** / **rtt_search** - Device logs (${this.probe.supportsRTT() ? "supported" : "not supported by " + probeName})
-- **read_memory** / **read_registers** - Inspect state
+- **read_memory** / **read_registers** - Inspect device state
 - halt/resume/reset/step - CPU control
 - flash/erase - Firmware programming
-- probe_command - Raw ${probeName} commands
 
 ## ARM Cortex-M memory map:
 - 0x00000000: Vector table
 - 0x20000000: SRAM
 - 0xE000ED28: CFSR (fault status)
 
-Start with start_debug_session.` }}],
+Start by checking list_devices, then set_device, then start_debug_session.` }}],
       })
     );
 
