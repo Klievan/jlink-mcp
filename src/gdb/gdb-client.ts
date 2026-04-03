@@ -27,6 +27,11 @@ export class GDBClient {
   private stopEvent: string | null = null;
   private history: string[] = [];
   private maxHistory = 200;
+  /** Saved connection params for auto-reconnect */
+  private lastConnectParams: { host: string; port: number; elfFile?: string } | null = null;
+  /** Minimum delay between commands to avoid overwhelming slow adapters */
+  private lastCommandTime = 0;
+  private commandThrottleMs = 50;
 
   constructor(gdbPath: string = "arm-none-eabi-gdb") {
     this.gdbPath = gdbPath;
@@ -84,6 +89,7 @@ export class GDBClient {
             this.sendCommand(`target remote ${host}:${port}`, 15000).then((connectResult) => {
               if (connectResult.includes("Remote debugging") || connectResult.includes("connected") || connectResult.includes("stopped")) {
                 this.connected = true;
+                this.lastConnectParams = { host, port, elfFile };
                 resolve({ success: true, output: `Connected to GDB server at ${host}:${port}\n${this.cleanMI(connectResult)}` });
               } else {
                 resolve({ success: false, output: this.cleanMI(connectResult), error: "Failed to connect to GDB server" });
@@ -112,9 +118,31 @@ export class GDBClient {
    * If the target doesn't stop in time, returns with a "target running" message.
    */
   async command(cmd: string, timeout: number = 15000): Promise<GDBResponse> {
+    // Auto-reconnect if connection dropped
+    if ((!this.proc || !this.connected) && this.lastConnectParams) {
+      log("[GDB] Connection lost, attempting auto-reconnect...");
+      const reconnect = await this.connect(
+        this.lastConnectParams.host,
+        this.lastConnectParams.port,
+        this.lastConnectParams.elfFile
+      );
+      if (!reconnect.success) {
+        return { success: false, output: "", error: `GDB disconnected and reconnect failed: ${reconnect.error}. Use gdb_connect to reconnect.` };
+      }
+      log("[GDB] Auto-reconnect succeeded");
+    }
+
     if (!this.proc || !this.connected) {
       return { success: false, output: "", error: "GDB not connected. Use gdb_connect first." };
     }
+
+    // Throttle rapid commands to avoid overwhelming slow adapters (e.g., ST-Link V2.1)
+    const now = Date.now();
+    const elapsed = now - this.lastCommandTime;
+    if (elapsed < this.commandThrottleMs) {
+      await new Promise((r) => setTimeout(r, this.commandThrottleMs - elapsed));
+    }
+    this.lastCommandTime = Date.now();
 
     // Detect if this is a "run" command that will make the target execute
     const isRunCommand = /^(continue|c|step|s|stepi|si|next|n|nexti|ni|finish|until|advance|run|r)\b/i.test(cmd.trim());

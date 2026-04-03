@@ -35,7 +35,7 @@ export class JLinkMcpServer {
 
     this.server = new McpServer({
       name: "jlink-mcp",
-      version: "0.3.1",
+      version: "0.3.2",
     });
 
     this.registerTools();
@@ -469,9 +469,7 @@ export class JLinkMcpServer {
         timeout: z.number().optional().describe("Timeout in ms for run commands (default 15000)"),
       },
       async ({ command, timeout }) => {
-        if (!this.gdb.isConnected()) {
-          return { content: [{ type: "text", text: "GDB not connected. Use gdb_connect first (requires gdb_server_start)." }] };
-        }
+        // Don't early-return if disconnected — gdb.command() will auto-reconnect
         const result = await this.gdb.command(command, timeout ?? 15000);
         let text = result.output;
         if (result.stopReason && result.stopReason !== "running") {
@@ -505,9 +503,6 @@ export class JLinkMcpServer {
         flash: z.boolean().optional().describe("Also flash the ELF to the target (default: false, symbols only)"),
       },
       async ({ elfFile, flash }) => {
-        if (!this.gdb.isConnected()) {
-          return { content: [{ type: "text", text: "GDB not connected. Use gdb_connect first." }] };
-        }
         const loadSymbols = await this.gdb.loadSymbols(elfFile);
         if (!flash) {
           return { content: [{ type: "text", text: `Symbols loaded: ${loadSymbols.output}\n\nBacktraces and variable inspection will now show source file:line info. Use flash=true to also program the target.` }] };
@@ -524,9 +519,6 @@ export class JLinkMcpServer {
         full: z.boolean().optional().describe("Include local variables in each frame (default false)"),
       },
       async ({ full }) => {
-        if (!this.gdb.isConnected()) {
-          return { content: [{ type: "text", text: "GDB not connected. Use gdb_connect first." }] };
-        }
         const result = await this.gdb.backtrace(full ?? false);
         return { content: [{ type: "text", text: result.output || "(no backtrace available)" }] };
       }
