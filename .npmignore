@@ -1,0 +1,14 @@
+src/
+.vscode/
+.vscode-test/
+.claude/
+.gitignore
+.vscodeignore
+.npmignore
+.mcp.json
+tsconfig.json
+mcp-config.json
+CLAUDE.md
+**/*.ts
+!out/**/*.d.ts
+*.vsix

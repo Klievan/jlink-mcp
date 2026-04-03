@@ -14,7 +14,7 @@
   "publisher": "Klievan",
   "license": "MIT",
   "engines": {
-    "vscode": "^1.99.0"
+    "vscode": "^1.110.0"
   },
   "categories": [
     "Debuggers",
@@ -36,13 +36,6 @@
     "openocd",
     "blackmagic",
     "firmware"
-  ],
-  "files": [
-    "out/**/*.js",
-    "out/**/*.d.ts",
-    "out/**/*.js.map",
-    "README.md",
-    "LICENSE"
   ],
   "bin": {
     "jlink-mcp": "./out/mcp/standalone.js"
