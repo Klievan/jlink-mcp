@@ -24,7 +24,77 @@ export function activate(context: vscode.ExtensionContext) {
 
   log("J-Link MCP Extension activating...");
 
-  // Core services
+  // ── Register MCP Server Definition Provider ──────────────────────
+  // This is the native VSCode API (1.99+) for exposing MCP servers.
+  // VSCode (Copilot Chat, Claude, etc.) auto-discovers and manages the
+  // MCP server lifecycle. The provider reads the user's settings to
+  // pass configuration as environment variables to the standalone server.
+
+  const mcpDidChange = new vscode.EventEmitter<void>();
+
+  const mcpProvider = vscode.lm.registerMcpServerDefinitionProvider(
+    "jlinkMcp.mcpServer",
+    {
+      onDidChangeMcpServerDefinitions: mcpDidChange.event,
+
+      provideMcpServerDefinitions(_token: vscode.CancellationToken) {
+        const cfg = vscode.workspace.getConfiguration("jlinkMcp");
+        const serverScript = vscode.Uri.joinPath(
+          context.extensionUri, "out", "mcp", "standalone.js"
+        ).fsPath;
+
+        // Build env vars from user's VSCode settings so the standalone
+        // server gets the same config without needing VSCode APIs.
+        const env: Record<string, string | number | null> = {};
+        const device = cfg.get<string>("jlink.device");
+        if (device && device !== "Unspecified") env["JLINK_DEVICE"] = device;
+        const installDir = cfg.get<string>("jlink.installDir");
+        if (installDir) env["JLINK_INSTALL_DIR"] = installDir;
+        const iface = cfg.get<string>("jlink.interface");
+        if (iface) env["JLINK_INTERFACE"] = iface;
+        const speed = cfg.get<number>("jlink.speed");
+        if (speed) env["JLINK_SPEED"] = speed;
+        const serial = cfg.get<string>("jlink.serialNumber");
+        if (serial) env["JLINK_SERIAL"] = serial;
+        const gdbPort = cfg.get<number>("jlink.gdbPort");
+        if (gdbPort) env["JLINK_GDB_PORT"] = gdbPort;
+        const rttPort = cfg.get<number>("jlink.rttTelnetPort");
+        if (rttPort) env["JLINK_RTT_PORT"] = rttPort;
+
+        return [
+          new vscode.McpStdioServerDefinition(
+            "J-Link Debug Probe",
+            process.execPath,      // Use VSCode's bundled Node.js
+            [serverScript],
+            env,
+            context.extension.packageJSON.version
+          ),
+        ];
+      },
+
+      resolveMcpServerDefinition(server, _token) {
+        // Could prompt for device selection here if needed.
+        // For now, just pass through.
+        return server;
+      },
+    }
+  );
+  context.subscriptions.push(mcpProvider, mcpDidChange);
+
+  // Re-fire MCP change event when settings change so VSCode restarts
+  // the MCP server with updated config.
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration("jlinkMcp")) {
+        log("J-Link MCP settings changed, notifying VSCode MCP client");
+        mcpDidChange.fire();
+      }
+    })
+  );
+
+  log("MCP server definition provider registered");
+
+  // ── Core services for extension UI ───────────────────────────────
   processManager = new ProcessManager();
   const config = getConfig();
   gdbServer = new GDBServerManager(processManager);

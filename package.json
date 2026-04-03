@@ -6,7 +6,7 @@
   "publisher": "thesprkfactory",
   "license": "MIT",
   "engines": {
-    "vscode": "^1.90.0"
+    "vscode": "^1.99.0"
   },
   "categories": [
     "Debuggers",
@@ -25,7 +25,7 @@
     "pigweed"
   ],
   "activationEvents": [
-    "onCommand:jlinkMcp.showStatus"
+    "onStartupFinished"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -167,13 +167,12 @@
         }
       }
     },
-    "mcpServers": {
-      "jlink": {
-        "command": "node",
-        "args": ["${extensionPath}/out/mcp/standalone.js"],
-        "env": {}
+    "mcpServerDefinitionProviders": [
+      {
+        "id": "jlinkMcp.mcpServer",
+        "label": "J-Link Debug Probe"
       }
-    }
+    ]
   },
   "scripts": {
     "compile": "tsc -p ./",
