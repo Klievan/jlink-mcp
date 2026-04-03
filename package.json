@@ -10,7 +10,7 @@
   "bugs": {
     "url": "https://github.com/Klievan/jlink-mcp/issues"
   },
-  "version": "0.2.1",
+  "version": "0.3.0",
   "publisher": "Klievan",
   "license": "MIT",
   "engines": {

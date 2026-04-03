@@ -3,6 +3,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { ProbeBackend } from "../probe/backend";
 import { createProbeBackend, ProbeFactoryConfig } from "../probe/factory";
+import { GDBClient } from "../gdb/gdb-client";
 import { RTTClient, ParsedLogLine } from "../rtt/rtt-client";
 import { TelnetProxy } from "../telnet/telnet-proxy";
 import { ProcessManager } from "../utils/process-manager";
@@ -12,16 +13,18 @@ export class JLinkMcpServer {
   private server: McpServer;
   private processManager: ProcessManager;
   private probe: ProbeBackend;
+  private gdb: GDBClient;
   private rttClient: RTTClient;
   private telnetProxy: TelnetProxy;
 
-  constructor(probeConfig?: ProbeFactoryConfig, rttPort?: number, telnetConfig?: { listenPort?: number; sourceHost?: string; sourcePort?: number }) {
+  constructor(probeConfig?: ProbeFactoryConfig, rttPort?: number, telnetConfig?: { listenPort?: number; sourceHost?: string; sourcePort?: number }, gdbPath?: string) {
     this.processManager = new ProcessManager();
     this.probe = createProbeBackend(
       probeConfig || { type: "jlink" },
       this.processManager
     );
 
+    this.gdb = new GDBClient(gdbPath || "arm-none-eabi-gdb");
     const effectiveRttPort = rttPort ?? this.probe.getRTTPort();
     this.rttClient = new RTTClient("localhost", effectiveRttPort > 0 ? effectiveRttPort : 19021);
     this.telnetProxy = new TelnetProxy(
@@ -32,7 +35,7 @@ export class JLinkMcpServer {
 
     this.server = new McpServer({
       name: "jlink-mcp",
-      version: "0.2.1",
+      version: "0.3.0",
     });
 
     this.registerTools();
@@ -433,6 +436,109 @@ export class JLinkMcpServer {
     );
 
     // ═══════════════════════════════════════════════════════════════
+    // GDB (source-level debugging)
+    // ═══════════════════════════════════════════════════════════════
+
+    this.server.tool(
+      "gdb_connect",
+      "Connect a GDB client to the running GDB server. Enables source-level debugging: backtraces, variable inspection, conditional breakpoints, stepping by source line. Optionally load an ELF file for symbol info.",
+      {
+        elfFile: z.string().optional().describe("Path to .elf file with debug symbols (enables source-level debugging)"),
+        host: z.string().optional().describe("GDB server host (default: localhost)"),
+        port: z.number().optional().describe("GDB server port (default: 2331)"),
+      },
+      async ({ elfFile, host, port }) => {
+        // Auto-start GDB server if not running
+        if (!probe.isGDBServerRunning()) {
+          const g = this.requireDevice(); if (g) return g;
+          const startResult = await probe.startGDBServer();
+          if (!startResult.success) return { content: [{ type: "text", text: `Failed to start GDB server: ${startResult.message}` }] };
+          await sleep(2000); // Wait for server to bind port
+        }
+        const gdbPort = port ?? probe.getGDBServerStatus().gdbPort;
+        const result = await this.gdb.connect(host ?? "localhost", gdbPort, elfFile);
+        return { content: [{ type: "text", text: result.success ? result.output : `Failed: ${result.error || result.output}` }] };
+      }
+    );
+
+    this.server.tool(
+      "gdb_command",
+      "Send any GDB command and get the response. For execution commands (continue, step, next, finish, until), blocks until the target stops or times out. If the target doesn't stop, use gdb_wait to poll. Examples: 'bt' (backtrace), 'info threads', 'print myVar', 'break main', 'continue', 'next', 'step', 'finish', 'info registers', 'x/10xw 0x20000000'",
+      {
+        command: z.string().describe("GDB command to execute"),
+        timeout: z.number().optional().describe("Timeout in ms for run commands (default 15000)"),
+      },
+      async ({ command, timeout }) => {
+        if (!this.gdb.isConnected()) {
+          return { content: [{ type: "text", text: "GDB not connected. Use gdb_connect first (requires gdb_server_start)." }] };
+        }
+        const result = await this.gdb.command(command, timeout ?? 15000);
+        let text = result.output;
+        if (result.stopReason && result.stopReason !== "running") {
+          text += `\n\nStopped: ${result.stopReason}`;
+        }
+        if (result.error) text += `\nError: ${result.error}`;
+        return { content: [{ type: "text", text: text || "(no output)" }] };
+      }
+    );
+
+    this.server.tool(
+      "gdb_wait",
+      "Poll for target stop after a continue/step that timed out. Returns the stop reason (breakpoint hit, signal, finished stepping, etc.) when the target halts.",
+      {
+        timeout: z.number().optional().describe("How long to wait in ms (default 30000)"),
+      },
+      async ({ timeout }) => {
+        if (!this.gdb.isConnected()) {
+          return { content: [{ type: "text", text: "GDB not connected" }] };
+        }
+        const result = await this.gdb.wait(timeout ?? 30000);
+        return { content: [{ type: "text", text: result.stopReason === "running" ? "Target still running" : `${result.output}` }] };
+      }
+    );
+
+    this.server.tool(
+      "gdb_load",
+      "Load an ELF file into GDB for debug symbols, then flash it to the target. Enables source-level debugging (backtraces with file:line, variable names, etc.)",
+      {
+        elfFile: z.string().describe("Path to .elf file with debug symbols"),
+      },
+      async ({ elfFile }) => {
+        if (!this.gdb.isConnected()) {
+          return { content: [{ type: "text", text: "GDB not connected. Use gdb_connect first." }] };
+        }
+        const loadSymbols = await this.gdb.loadSymbols(elfFile);
+        const loadFlash = await this.gdb.command("load", 60000);
+        return { content: [{ type: "text", text: `Symbols: ${loadSymbols.output}\nFlash: ${loadFlash.output}` }] };
+      }
+    );
+
+    this.server.tool(
+      "gdb_backtrace",
+      "Get a stack backtrace. With debug symbols loaded, shows function names, file paths, and line numbers.",
+      {
+        full: z.boolean().optional().describe("Include local variables in each frame (default false)"),
+      },
+      async ({ full }) => {
+        if (!this.gdb.isConnected()) {
+          return { content: [{ type: "text", text: "GDB not connected. Use gdb_connect first." }] };
+        }
+        const result = await this.gdb.backtrace(full ?? false);
+        return { content: [{ type: "text", text: result.output || "(no backtrace available)" }] };
+      }
+    );
+
+    this.server.tool(
+      "gdb_disconnect",
+      "Disconnect the GDB client (does not stop the GDB server)",
+      {},
+      async () => {
+        this.gdb.disconnect();
+        return { content: [{ type: "text", text: "GDB client disconnected" }] };
+      }
+    );
+
+    // ═══════════════════════════════════════════════════════════════
     // RTT
     // ═══════════════════════════════════════════════════════════════
 
@@ -614,6 +720,7 @@ Start with start_debug_session.` }}],
   }
 
   dispose(): void {
+    this.gdb.disconnect();
     this.rttClient.disconnect();
     this.telnetProxy.stop();
     this.probe.dispose();

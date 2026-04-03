@@ -106,7 +106,8 @@ async function main() {
       listenPort: envNum("TELNET_PROXY_PORT", 19400),
       sourceHost: env("TELNET_PROXY_SOURCE_HOST") || "localhost",
       sourcePort: env("TELNET_PROXY_SOURCE_PORT") ? Number(env("TELNET_PROXY_SOURCE_PORT")) : undefined,
-    }
+    },
+    env("GDB_PATH") || "arm-none-eabi-gdb"
   );
 
   process.on("SIGINT", () => { server.dispose(); process.exit(0); });
