@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//Applications/SEGGER/**)",
+      "Read(//opt/**)",
+      "Bash(trice version:*)",
+      "Bash(npm --version)",
+      "Read(//usr/local/bin/**)",
+      "Bash(ls /opt/homebrew/bin/node*)",
+      "Bash(brew list:*)",
+      "Bash(jlink --version)",
+      "Bash(/usr/bin/jlink -version)",
+      "Bash(/opt/homebrew/bin/node --version)",
+      "Bash(/opt/homebrew/bin/npm --version)",
+      "Bash(export PATH=\"/opt/homebrew/bin:$PATH\")",
+      "Bash(npm init:*)",
+      "Bash(npm install:*)",
+      "Bash(npx tsc:*)",
+      "Bash(timeout 5 node out/mcp/standalone.js)",
+      "Bash(/Applications/SEGGER/JLink/JLinkExe --version)",
+      "Bash(/Applications/SEGGER/JLink/JLinkExe)",
+      "Bash(ls /Applications/SEGGER/JLink/JLinkGDBServer*)",
+      "Bash(git init:*)",
+      "Bash(git add:*)"
+    ]
+  }
+}

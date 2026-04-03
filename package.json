@@ -1,0 +1,196 @@
+{
+  "name": "jlink-mcp",
+  "displayName": "J-Link MCP Server",
+  "description": "MCP server for SEGGER J-Link debug probes - enables LLM-driven embedded debugging with RTT, GDB server, and telnet proxy for Trice/Pigweed detokenizer",
+  "version": "0.1.0",
+  "publisher": "thesprkfactory",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Debuggers",
+    "Other"
+  ],
+  "keywords": [
+    "j-link",
+    "segger",
+    "embedded",
+    "mcp",
+    "rtt",
+    "debug",
+    "arm",
+    "cortex-m",
+    "trice",
+    "pigweed"
+  ],
+  "activationEvents": [
+    "onCommand:jlinkMcp.showStatus"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "jlinkMcp.showStatus",
+        "title": "J-Link MCP: Show Status",
+        "category": "J-Link"
+      },
+      {
+        "command": "jlinkMcp.startGdbServer",
+        "title": "J-Link MCP: Start GDB Server",
+        "category": "J-Link"
+      },
+      {
+        "command": "jlinkMcp.stopGdbServer",
+        "title": "J-Link MCP: Stop GDB Server",
+        "category": "J-Link"
+      },
+      {
+        "command": "jlinkMcp.connectRtt",
+        "title": "J-Link MCP: Connect RTT",
+        "category": "J-Link"
+      },
+      {
+        "command": "jlinkMcp.disconnectRtt",
+        "title": "J-Link MCP: Disconnect RTT",
+        "category": "J-Link"
+      },
+      {
+        "command": "jlinkMcp.startTelnetProxy",
+        "title": "J-Link MCP: Start Telnet Proxy",
+        "category": "J-Link"
+      },
+      {
+        "command": "jlinkMcp.stopTelnetProxy",
+        "title": "J-Link MCP: Stop Telnet Proxy",
+        "category": "J-Link"
+      },
+      {
+        "command": "jlinkMcp.flashFirmware",
+        "title": "J-Link MCP: Flash Firmware",
+        "category": "J-Link"
+      },
+      {
+        "command": "jlinkMcp.showOutput",
+        "title": "J-Link MCP: Show Output Log",
+        "category": "J-Link"
+      },
+      {
+        "command": "jlinkMcp.showRttOutput",
+        "title": "J-Link MCP: Show RTT Output",
+        "category": "J-Link"
+      }
+    ],
+    "configuration": {
+      "title": "J-Link MCP",
+      "properties": {
+        "jlinkMcp.jlink.installDir": {
+          "type": "string",
+          "default": "",
+          "description": "Path to SEGGER J-Link installation directory (auto-detected if empty)"
+        },
+        "jlinkMcp.jlink.device": {
+          "type": "string",
+          "default": "Unspecified",
+          "description": "Target device name (e.g., NRF52840_XXAA, STM32F407VG)"
+        },
+        "jlinkMcp.jlink.interface": {
+          "type": "string",
+          "enum": ["SWD", "JTAG"],
+          "default": "SWD",
+          "description": "Debug interface"
+        },
+        "jlinkMcp.jlink.speed": {
+          "type": "number",
+          "default": 4000,
+          "description": "Connection speed in kHz"
+        },
+        "jlinkMcp.jlink.serialNumber": {
+          "type": "string",
+          "default": "",
+          "description": "J-Link serial number (for multi-probe setups)"
+        },
+        "jlinkMcp.jlink.gdbPort": {
+          "type": "number",
+          "default": 2331,
+          "description": "GDB server port"
+        },
+        "jlinkMcp.jlink.rttTelnetPort": {
+          "type": "number",
+          "default": 19021,
+          "description": "RTT telnet port"
+        },
+        "jlinkMcp.jlink.swoTelnetPort": {
+          "type": "number",
+          "default": 2332,
+          "description": "SWO telnet port"
+        },
+        "jlinkMcp.telnetProxy.listenPort": {
+          "type": "number",
+          "default": 19400,
+          "description": "Telnet proxy listen port for Trice/Pigweed"
+        },
+        "jlinkMcp.telnetProxy.sourcePort": {
+          "type": "number",
+          "default": 19021,
+          "description": "Source port to proxy (usually RTT telnet port)"
+        },
+        "jlinkMcp.telnetProxy.sourceHost": {
+          "type": "string",
+          "default": "localhost",
+          "description": "Source host for telnet proxy"
+        },
+        "jlinkMcp.trice.binaryPath": {
+          "type": "string",
+          "default": "trice",
+          "description": "Path to trice binary"
+        },
+        "jlinkMcp.trice.idListPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to Trice ID list file (til.json)"
+        },
+        "jlinkMcp.trice.encoding": {
+          "type": "string",
+          "default": "TREX",
+          "description": "Trice encoding format"
+        },
+        "jlinkMcp.pigweed.tokenDatabase": {
+          "type": "string",
+          "default": "",
+          "description": "Path to Pigweed token database (.csv or .elf)"
+        },
+        "jlinkMcp.pigweed.pythonPath": {
+          "type": "string",
+          "default": "python3",
+          "description": "Path to Python for Pigweed detokenizer"
+        }
+      }
+    },
+    "mcpServers": {
+      "jlink": {
+        "command": "node",
+        "args": ["${extensionPath}/out/mcp/standalone.js"],
+        "env": {}
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "build": "npm run compile",
+    "package": "vsce package",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.2",
+    "@types/vscode": "^1.110.0",
+    "@vscode/vsce": "^3.7.1",
+    "esbuild": "^0.28.0",
+    "typescript": "^6.0.2"
+  }
+}
