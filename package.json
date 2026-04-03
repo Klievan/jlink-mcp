@@ -25,13 +25,28 @@
     "segger",
     "embedded",
     "mcp",
+    "mcp-server",
+    "model-context-protocol",
     "rtt",
     "debug",
     "arm",
     "cortex-m",
     "trice",
-    "pigweed"
+    "pigweed",
+    "openocd",
+    "blackmagic",
+    "firmware"
   ],
+  "files": [
+    "out/**/*.js",
+    "out/**/*.d.ts",
+    "out/**/*.js.map",
+    "README.md",
+    "LICENSE"
+  ],
+  "bin": {
+    "jlink-mcp": "./out/mcp/standalone.js"
+  },
   "activationEvents": [
     "onStartupFinished"
   ],
@@ -186,6 +201,7 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "build": "npm run compile",
+    "prepublishOnly": "npm run compile",
     "package": "vsce package",
     "lint": "tsc --noEmit"
   },
