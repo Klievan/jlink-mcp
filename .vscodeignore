@@ -1,8 +1,17 @@
 .vscode/**
 .vscode-test/**
+.claude/**
 src/**
 node_modules/**
 .gitignore
+.npmignore
+.mcp.json
 tsconfig.json
+esbuild.mjs
+mcp-config.json
+CLAUDE.md
 **/*.ts
+!out/**/*.js
 **/*.map
+**/*.d.ts
+**/*.d.ts.map

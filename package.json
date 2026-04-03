@@ -10,7 +10,7 @@
   "bugs": {
     "url": "https://github.com/Klievan/jlink-mcp/issues"
   },
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "Klievan",
   "license": "MIT",
   "engines": {
@@ -192,10 +192,12 @@
   },
   "scripts": {
     "compile": "tsc -p ./",
+    "bundle": "node esbuild.mjs",
     "watch": "tsc -watch -p ./",
-    "build": "npm run compile",
-    "prepublishOnly": "npm run compile",
-    "package": "vsce package",
+    "build": "npm run compile && npm run bundle",
+    "prepublishOnly": "npm run build",
+    "vscode:prepublish": "npm run build",
+    "package": "npm run build && vsce package",
     "lint": "tsc --noEmit"
   },
   "dependencies": {
