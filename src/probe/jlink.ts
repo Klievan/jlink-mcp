@@ -221,6 +221,39 @@ export class JLinkBackend extends ProbeBackend {
 
   getGDBServerOutput(lines = 50): string[] { return this.gdbOutputBuffer.slice(-lines); }
 
+  // ── Device configuration ─────────────────────────────────────────
+
+  isDeviceConfigured(): boolean {
+    return !!this.config.device && this.config.device !== "Unspecified";
+  }
+
+  getDeviceName(): string { return this.config.device; }
+
+  setDevice(device: string): void {
+    log(`[J-Link] Device set to: ${device}`);
+    this.config.device = device;
+  }
+
+  async listDevices(): Promise<CommandResult> {
+    // Run ShowEmuList without specifying a device to see connected probes
+    const args = ["-NoGui", "1"];
+    return new Promise<CommandResult>((resolve) => {
+      const proc = spawn(this.jlinkExe, args, { stdio: ["pipe", "pipe", "pipe"] });
+      let stdout = "", stderr = "";
+      proc.stdout?.on("data", (d: Buffer) => { stdout += d.toString(); });
+      proc.stderr?.on("data", (d: Buffer) => { stderr += d.toString(); });
+      proc.stdin?.write("ShowEmuList\nexit\n");
+      proc.stdin?.end();
+      proc.on("error", (err) => {
+        resolve({ success: false, rawOutput: stdout, output: stdout, error: `Failed to run JLinkExe: ${err.message}` });
+      });
+      proc.on("exit", (code) => {
+        resolve({ success: code === 0, rawOutput: stdout, output: stripBoilerplate(stdout), error: stderr || undefined });
+      });
+      setTimeout(() => { proc.kill("SIGTERM"); resolve({ success: false, rawOutput: stdout, output: stdout, error: "Timed out" }); }, 10000);
+    });
+  }
+
   // ── RTT ──────────────────────────────────────────────────────────
 
   supportsRTT(): boolean { return true; }

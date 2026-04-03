@@ -32,7 +32,7 @@ export class JLinkMcpServer {
 
     this.server = new McpServer({
       name: "jlink-mcp",
-      version: "0.1.2",
+      version: "0.1.3",
     });
 
     this.registerTools();
@@ -40,8 +40,58 @@ export class JLinkMcpServer {
     this.registerPrompts();
   }
 
+  /**
+   * Returns an MCP error response if device is not configured, or null if OK.
+   * Call at the top of any tool handler that talks to hardware.
+   */
+  private requireDevice(): { content: [{ type: "text"; text: string }] } | null {
+    if (!this.probe.isDeviceConfigured()) {
+      return {
+        content: [{
+          type: "text",
+          text: `ERROR: No target device configured for ${this.probe.displayName}.\n\nBefore using debugging tools, you must set the target device. Please:\n1. Call list_devices to scan for connected probes\n2. Call set_device with the correct device name (e.g., "nRF52840_XXAA", "STM32F407VG")\n\nCommon device names: nRF52840_XXAA, nRF5340_xxAA_APP, STM32F407VG, STM32L476RG, STM32H743ZI, RP2040_M0_0`,
+        }],
+      };
+    }
+    return null;
+  }
+
   private registerTools(): void {
     const probe = this.probe;
+
+    // ═══════════════════════════════════════════════════════════════
+    // DEVICE CONFIGURATION (always available, even without device set)
+    // ═══════════════════════════════════════════════════════════════
+
+    this.server.tool(
+      "list_devices",
+      "Scan for connected debug probes and show what hardware is attached. Use this first if you don't know what device is connected.",
+      {},
+      async () => {
+        const result = await probe.listDevices();
+        const lines = [
+          `Probe: ${probe.displayName}`,
+          `Currently configured device: ${probe.getDeviceName()}`,
+          `Device configured: ${probe.isDeviceConfigured() ? "Yes" : "NO - use set_device to configure"}`,
+          "",
+          "--- Scan Results ---",
+          result.output || result.rawOutput || "(no output)",
+        ];
+        return { content: [{ type: "text", text: lines.join("\n") }] };
+      }
+    );
+
+    this.server.tool(
+      "set_device",
+      "Set the target device name at runtime. Required before any debugging commands will work. Examples: 'nRF52840_XXAA', 'nRF5340_xxAA_APP', 'STM32F407VG', 'STM32L476RG'.",
+      {
+        device: z.string().describe("Target device name (e.g., 'nRF52840_XXAA', 'STM32F407VG')"),
+      },
+      async ({ device }) => {
+        probe.setDevice(device);
+        return { content: [{ type: "text", text: `Device set to "${device}". You can now use all debugging tools.` }] };
+      }
+    );
 
     // ═══════════════════════════════════════════════════════════════
     // COMPOSITE / WORKFLOW TOOLS
@@ -49,9 +99,11 @@ export class JLinkMcpServer {
 
     this.server.tool(
       "start_debug_session",
-      `One-call setup: starts GDB server via ${probe.displayName}, connects RTT (if supported), waits for initial output. This is the recommended first tool to call.`,
+      `One-call setup: starts GDB server via ${probe.displayName}, connects RTT (if supported), waits for initial output. This is the recommended first tool to call. If no device is configured, use list_devices and set_device first.`,
       {},
       async () => {
+        const guard = this.requireDevice();
+        if (guard) return guard;
         const steps: string[] = [];
 
         if (!probe.isGDBServerRunning()) {
@@ -94,6 +146,8 @@ export class JLinkMcpServer {
       "Capture complete device state: CPU registers (compact), fault status, recent RTT output, and stack dump.",
       { rttLines: z.number().min(0).max(200).optional().describe("RTT lines to include (default 30)") },
       async ({ rttLines }) => {
+        const guard = this.requireDevice();
+        if (guard) return guard;
         const sections: string[] = [];
 
         const regResult = await probe.readAllRegisters();
@@ -136,6 +190,8 @@ export class JLinkMcpServer {
       "Auto-read and decode ARM Cortex-M fault registers (CFSR, HFSR, MMFAR, BFAR), exception stack frame, and recent errors.",
       {},
       async () => {
+        const guard = this.requireDevice();
+        if (guard) return guard;
         const sections: string[] = ["## Crash Diagnosis"];
 
         const regResult = await probe.readAllRegisters();
@@ -207,6 +263,8 @@ export class JLinkMcpServer {
       `Get connected device info via ${probe.displayName}. Returns probe type, target CPU, and compact register summary.`,
       {},
       async () => {
+        const guard = this.requireDevice();
+        if (guard) return guard;
         const result = await probe.getDeviceInfo();
         const regs = probe.parseRegisters(result.rawOutput);
         if (regs) {
@@ -218,6 +276,7 @@ export class JLinkMcpServer {
 
     this.server.tool("halt", "Halt the target CPU", {},
       async () => {
+        const g = this.requireDevice(); if (g) return g;
         const r = await probe.halt();
         return { content: [{ type: "text", text: r.success ? "CPU halted" : `Failed: ${r.output}` }] };
       }
@@ -225,6 +284,7 @@ export class JLinkMcpServer {
 
     this.server.tool("resume", "Resume the target CPU", {},
       async () => {
+        const g = this.requireDevice(); if (g) return g;
         const r = await probe.resume();
         return { content: [{ type: "text", text: r.success ? "CPU resumed" : `Failed: ${r.output}` }] };
       }
@@ -233,6 +293,7 @@ export class JLinkMcpServer {
     this.server.tool("reset", "Reset the target device",
       { halt: z.boolean().optional().describe("Halt after reset (default: false)") },
       async ({ halt }) => {
+        const g = this.requireDevice(); if (g) return g;
         const r = await probe.reset(halt ?? false);
         return { content: [{ type: "text", text: r.success ? `Device reset${halt ? " (halted)" : " (running)"}` : `Failed: ${r.output}` }] };
       }
@@ -241,6 +302,7 @@ export class JLinkMcpServer {
     this.server.tool("step", "Step one CPU instruction",
       {},
       async () => {
+        const g = this.requireDevice(); if (g) return g;
         const r = await probe.step();
         const regs = probe.parseRegisters(r.rawOutput);
         if (regs) return { content: [{ type: "text", text: `Stepped. PC=${regs["PC"] || "?"} LR=${regs["LR"] || "?"} SP=${regs["SP"] || "?"}` }] };
@@ -258,6 +320,7 @@ export class JLinkMcpServer {
         length: z.number().min(1).max(4096).describe("Bytes to read (max 4096)"),
       },
       async ({ address, length }) => {
+        const g = this.requireDevice(); if (g) return g;
         const addr = parseInt(address, 16);
         if (isNaN(addr)) return { content: [{ type: "text", text: "Error: invalid hex address" }] };
         const r = await probe.readMemory(addr, length);
@@ -273,6 +336,7 @@ export class JLinkMcpServer {
         value: z.string().describe("Hex value (e.g., '0xDEADBEEF')"),
       },
       async ({ address, value }) => {
+        const g = this.requireDevice(); if (g) return g;
         const addr = parseInt(address, 16), val = parseInt(value, 16);
         if (isNaN(addr) || isNaN(val)) return { content: [{ type: "text", text: "Error: invalid hex" }] };
         const r = await probe.writeMemory(addr, val);
@@ -286,6 +350,7 @@ export class JLinkMcpServer {
 
     this.server.tool("read_registers", "Read all CPU registers (compact format, FP only if non-zero).", {},
       async () => {
+        const g = this.requireDevice(); if (g) return g;
         const r = await probe.readAllRegisters();
         const regs = probe.parseRegisters(r.rawOutput);
         if (regs) return { content: [{ type: "text", text: probe.formatRegistersCompact(regs) }] };
@@ -296,6 +361,7 @@ export class JLinkMcpServer {
     this.server.tool("read_register", "Read a specific CPU register by name",
       { register: z.string().describe("Register name (e.g., 'PC', 'SP', 'R0')") },
       async ({ register }) => {
+        const g = this.requireDevice(); if (g) return g;
         const r = await probe.readRegister(register);
         return { content: [{ type: "text", text: r.output || r.rawOutput }] };
       }
@@ -311,6 +377,7 @@ export class JLinkMcpServer {
         baseAddress: z.string().optional().describe("Base address for .bin files (hex)"),
       },
       async ({ filePath, baseAddress }) => {
+        const g = this.requireDevice(); if (g) return g;
         const addr = baseAddress ? parseInt(baseAddress, 16) : undefined;
         const r = await probe.flash(filePath, addr);
         return { content: [{ type: "text", text: r.success ? `Flashed ${filePath}` : `Flash failed: ${r.output}` }] };
@@ -319,6 +386,7 @@ export class JLinkMcpServer {
 
     this.server.tool("erase", "Erase target flash memory", {},
       async () => {
+        const g = this.requireDevice(); if (g) return g;
         const r = await probe.erase();
         return { content: [{ type: "text", text: r.success ? "Chip erased" : `Erase failed: ${r.output}` }] };
       }
@@ -332,13 +400,14 @@ export class JLinkMcpServer {
       { address: z.string().describe("Hex address") },
       async ({ address }) => {
         const addr = parseInt(address, 16);
+        const g = this.requireDevice(); if (g) return g;
         const r = await probe.setBreakpoint(addr);
         return { content: [{ type: "text", text: r.success ? `Breakpoint set at 0x${addr.toString(16)}` : `Failed: ${r.output}` }] };
       }
     );
 
     this.server.tool("clear_breakpoints", "Clear all breakpoints", {},
-      async () => { await probe.clearBreakpoints(); return { content: [{ type: "text", text: "Breakpoints cleared" }] }; }
+      async () => { const g = this.requireDevice(); if (g) return g; await probe.clearBreakpoints(); return { content: [{ type: "text", text: "Breakpoints cleared" }] }; }
     );
 
     // ═══════════════════════════════════════════════════════════════
@@ -346,7 +415,7 @@ export class JLinkMcpServer {
     // ═══════════════════════════════════════════════════════════════
 
     this.server.tool("gdb_server_start", `Start ${probe.displayName} GDB server`, {},
-      async () => { const r = await probe.startGDBServer(); return { content: [{ type: "text", text: r.message }] }; }
+      async () => { const g = this.requireDevice(); if (g) return g; const r = await probe.startGDBServer(); return { content: [{ type: "text", text: r.message }] }; }
     );
 
     this.server.tool("gdb_server_stop", `Stop ${probe.displayName} GDB server and disconnect RTT`, {},
@@ -439,6 +508,7 @@ export class JLinkMcpServer {
     this.server.tool("probe_command", `Execute raw ${probe.displayName} commands`,
       { commands: z.array(z.string()).describe("Commands to execute") },
       async ({ commands }) => {
+        const g = this.requireDevice(); if (g) return g;
         const r = await probe.executeRaw(commands);
         return { content: [{ type: "text", text: r.output || "(no output)" }] };
       }

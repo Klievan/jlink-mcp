@@ -78,6 +78,20 @@ export abstract class ProbeBackend {
 
   abstract executeRaw(commands: string[]): Promise<CommandResult>;
 
+  // ── Device configuration ──────────────────────────────────────────
+
+  /** Whether a target device has been configured */
+  abstract isDeviceConfigured(): boolean;
+
+  /** Get the currently configured device name */
+  abstract getDeviceName(): string;
+
+  /** Set the target device at runtime (no restart needed) */
+  abstract setDevice(device: string): void;
+
+  /** List connected probes / scan for devices. Returns human-readable text. */
+  abstract listDevices(): Promise<CommandResult>;
+
   // ── RTT support (optional - not all probes support this) ─────────
 
   /** Whether this probe supports RTT */

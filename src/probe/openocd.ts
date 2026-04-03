@@ -222,5 +222,14 @@ export class OpenOCDBackend extends ProbeBackend {
 
   supportsRTT(): boolean { return false; }
 
+  isDeviceConfigured(): boolean {
+    return !!this.config.targetConfig && this.config.targetConfig !== "";
+  }
+  getDeviceName(): string { return this.config.targetConfig; }
+  setDevice(device: string): void { this.config.targetConfig = device; }
+  async listDevices(): Promise<CommandResult> {
+    return this.exec(["init", "targets"]);
+  }
+
   dispose(): void { this.processManager.kill(OPENOCD_PROCESS); }
 }

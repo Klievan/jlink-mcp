@@ -147,5 +147,12 @@ export class BlackMagicBackend extends ProbeBackend {
 
   supportsRTT(): boolean { return false; }
 
+  isDeviceConfigured(): boolean { return !!this.config.serialPort; }
+  getDeviceName(): string { return this.config.serialPort; }
+  setDevice(device: string): void { this.config.serialPort = device; }
+  async listDevices(): Promise<CommandResult> {
+    return this.gdbExec(["monitor swdp_scan"]);
+  }
+
   dispose(): void { /* nothing to clean up */ }
 }
