@@ -238,6 +238,7 @@ export async function executeJLinkCommands(
     "-speed", String(config.jlink.speed),
     "-autoconnect", "1",
     "-ExitOnError", "1",
+    "-NoGui", "1",
   ];
 
   if (config.jlink.serialNumber) {

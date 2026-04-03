@@ -102,6 +102,7 @@ export class JLinkBackend extends ProbeBackend {
       "-speed", String(this.config.speed),
       "-autoconnect", "1",
       "-ExitOnError", "1",
+      "-NoGui", "1",
     ];
     if (this.config.serialNumber) {
       args.push("-SelectEmuBySN", this.config.serialNumber);
@@ -180,7 +181,7 @@ export class JLinkBackend extends ProbeBackend {
       "-port", String(this.config.gdbPort),
       "-RTTTelnetPort", String(this.config.rttTelnetPort),
       "-SWOPort", String(this.config.swoTelnetPort),
-      "-vd", "-noir", "-LocalhostOnly", "1", "-singlerun",
+      "-vd", "-noir", "-LocalhostOnly", "1", "-singlerun", "-NoGui", "1",
     ];
     if (this.config.serialNumber) args.push("-select", `USB=${this.config.serialNumber}`);
 
