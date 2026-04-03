@@ -499,15 +499,19 @@ export class JLinkMcpServer {
 
     this.server.tool(
       "gdb_load",
-      "Load an ELF file into GDB for debug symbols, then flash it to the target. Enables source-level debugging (backtraces with file:line, variable names, etc.)",
+      "Load an ELF file into GDB. By default loads symbols only (for source-level debugging: backtraces with file:line, variable names). Set flash=true to also program it onto the target.",
       {
         elfFile: z.string().describe("Path to .elf file with debug symbols"),
+        flash: z.boolean().optional().describe("Also flash the ELF to the target (default: false, symbols only)"),
       },
-      async ({ elfFile }) => {
+      async ({ elfFile, flash }) => {
         if (!this.gdb.isConnected()) {
           return { content: [{ type: "text", text: "GDB not connected. Use gdb_connect first." }] };
         }
         const loadSymbols = await this.gdb.loadSymbols(elfFile);
+        if (!flash) {
+          return { content: [{ type: "text", text: `Symbols loaded: ${loadSymbols.output}\n\nBacktraces and variable inspection will now show source file:line info. Use flash=true to also program the target.` }] };
+        }
         const loadFlash = await this.gdb.command("load", 60000);
         return { content: [{ type: "text", text: `Symbols: ${loadSymbols.output}\nFlash: ${loadFlash.output}` }] };
       }
