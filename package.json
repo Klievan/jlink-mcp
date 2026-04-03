@@ -1,7 +1,15 @@
 {
   "name": "jlink-mcp",
-  "displayName": "J-Link MCP Server",
-  "description": "MCP server for SEGGER J-Link debug probes - enables LLM-driven embedded debugging with RTT, GDB server, and telnet proxy for Trice/Pigweed detokenizer",
+  "displayName": "jlink-mcp",
+  "description": "MCP server for SEGGER J-Link debug probes — LLM-driven embedded debugging with RTT, GDB server, and Trice/Pigweed support",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/thesprkfactory/jlink-mcp"
+  },
+  "homepage": "https://github.com/thesprkfactory/jlink-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/thesprkfactory/jlink-mcp/issues"
+  },
   "version": "0.1.0",
   "publisher": "thesprkfactory",
   "license": "MIT",
