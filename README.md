@@ -476,7 +476,7 @@ so a fast unit tier replays real device bytes in seconds on any machine —
 no probe required to catch a format regression.
 
 ```bash
-npm test          # ~231 tests, seconds, no hardware
+npm test          # ~240 tests, seconds, no hardware
 npm run test:hil  # hardware tier; needs HIL=1 and a probe
 ```
 
