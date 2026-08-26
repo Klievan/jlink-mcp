@@ -19,6 +19,9 @@
  *
  *   Telnet proxy:
  *     TELNET_PROXY_PORT, TELNET_PROXY_SOURCE_PORT, TELNET_PROXY_SOURCE_HOST
+ *
+ *   Peripheral decoding:
+ *     SVD_PATH  - CMSIS-SVD file for the target, enabling symbolic peripheral reads
  */
 
 // Provide a minimal vscode stub (only needed for config.ts imports that reference vscode)
@@ -107,7 +110,8 @@ async function main() {
       sourceHost: env("TELNET_PROXY_SOURCE_HOST") || "localhost",
       sourcePort: env("TELNET_PROXY_SOURCE_PORT") ? Number(env("TELNET_PROXY_SOURCE_PORT")) : undefined,
     },
-    env("GDB_PATH") || "arm-none-eabi-gdb"
+    env("GDB_PATH") || "arm-none-eabi-gdb",
+    env("SVD_PATH")
   );
 
   process.on("SIGINT", () => { server.dispose(); process.exit(0); });
