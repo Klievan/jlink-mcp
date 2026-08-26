@@ -171,6 +171,69 @@ describe("decodeFaultRegisters — debug events", () => {
   });
 });
 
+describe("disarmDebugState", () => {
+  // The single most durable way to break this rig: a breakpoint comparator
+  // left armed re-triggers on every later run, escalates to HardFault with
+  // no debugger attached, and parks the CPU in its fault handler. A
+  // probe-issued reset does not clear it, so every subsequent session
+  // inherits a target that will not boot.
+  class Recorder extends StubBackend {
+    writes: [number, number][] = [];
+    async writeMemory(address: number, value: number) {
+      this.writes.push([address, value]);
+      return { success: true, rawOutput: '', output: '' };
+    }
+  }
+
+  test("zeroes every FPB comparator", async () => {
+    const b = new Recorder();
+    await b.disarmDebugState();
+    for (const addr of [0xe0002008, 0xe000200c, 0xe0002010, 0xe0002014, 0xe0002018, 0xe000201c]) {
+      const w = b.writes.find(([a]) => a === addr);
+      assert.ok(w, `FP_COMP at 0x${addr.toString(16)} was not cleared`);
+      assert.equal(w![1], 0);
+    }
+  });
+
+  test("disables FP_CTRL with the key bit set", async () => {
+    const b = new Recorder();
+    await b.disarmDebugState();
+    const w = b.writes.find(([a]) => a === 0xe0002000);
+    // KEY=1, ENABLE=0. Without the key bit the write is ignored entirely.
+    assert.equal(w?.[1], 0x2);
+  });
+
+  test("clears DEMCR so vector catches do not trap either", async () => {
+    const b = new Recorder();
+    await b.disarmDebugState();
+    assert.equal(b.writes.find(([a]) => a === 0xe000edfc)?.[1], 0);
+  });
+
+  test("clears comparators before disabling the unit", async () => {
+    // FP_CTRL.ENABLE is re-enabled by the J-Link DLL on every attach, so
+    // disabling the unit is not durable — only cleared comparators are. Doing
+    // the comparators first means an interrupted disarm still leaves the
+    // dangerous part done.
+    const b = new Recorder();
+    await b.disarmDebugState();
+    const lastComp = b.writes.findIndex(([a]) => a === 0xe000201c);
+    const ctrl = b.writes.findIndex(([a]) => a === 0xe0002000);
+    assert.ok(lastComp < ctrl, "comparators must be cleared before FP_CTRL");
+  });
+
+  test("reports which writes failed rather than claiming success", async () => {
+    class Failing extends Recorder {
+      async writeMemory(address: number, value: number) {
+        await super.writeMemory(address, value);
+        return { success: address !== 0xe0002008, rawOutput: "", output: "" };
+      }
+    }
+    const r = await new Failing().disarmDebugState();
+    assert.equal(r.ok, false);
+    assert.match(r.detail, /FP_COMP0/);
+  });
+});
+
 describe("readFaultRegisters — end to end from a memory transcript", () => {
   test("decodes the J-Link dump into CFSR/HFSR/MMFAR/BFAR", async () => {
     const backend = new StubBackend();

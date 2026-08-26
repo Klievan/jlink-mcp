@@ -202,39 +202,22 @@ export async function ensureFixtureRunning(
   const pc = await attempt();
   if (pc !== null && pc >= resetHandler && pc <= resetHandler + 0x10) return "target already healthy";
 
-  // Cut power directly rather than asking hil-recover to escalate. The
-  // runner grants passwordless sudo to hil-power-cycle specifically, and
-  // hil-recover checks for root instead of using that grant — it reports
-  // "cannot power-cycle (no root and no passwordless sudo)" and carries on,
-  // so the escalation never actually happens from inside a test.
+  // SWD disarm, not a power cycle. This rig has no working power cycle: the
+  // hub advertises per-port switching and reports success, but VBUS is never
+  // actually removed — the device stays enumerated through a 15s "off" and
+  // target RAM survives it. Designing recovery around it would mean a
+  // recovery step that reports success and does nothing, which is worse than
+  // having no recovery at all.
   //
-  // A power cycle is the only thing that clears armed debug state: the debug
-  // block survives the reset a probe issues, which is how a stale breakpoint
-  // keeps re-triggering across resets.
-  const recovery = [hilPowerCycle(), hilRecover([])].join(" | ");
+  // hil-recover disarms the debug block over SWD, which is what actually
+  // clears an armed breakpoint comparator. Non-zero exit means it genuinely
+  // failed, so it is not worth retrying past this point.
+  const recovery = hilRecover(["--check-target"]);
   const pc2 = await attempt();
   if (pc2 !== null && pc2 >= resetHandler && pc2 <= resetHandler + 0x10) {
     return `recovered by power cycle (PC was 0x${pc?.toString(16)})`;
   }
   return `RECOVERY FAILED: PC 0x${pc?.toString(16)} then 0x${pc2?.toString(16)}. ${recovery}`;
-}
-
-/**
- * Cut power to the target's hub port.
- *
- * Invoked as `sudo -n /usr/local/bin/hil-power-cycle` — the exact binary the
- * runner grants, which hardcodes its hub and port so CI cannot cut power to
- * anything else on the bus.
- */
-export function hilPowerCycle(): string {
-  const script = "/usr/local/bin/hil-power-cycle";
-  if (!fs.existsSync(script)) return "hil-power-cycle not present (not on the HIL runner)";
-  try {
-    execFileSync("sudo", ["-n", script], { encoding: "utf8", timeout: 60_000 });
-    return "power cycled";
-  } catch (e: any) {
-    return `power cycle failed: ${e.stdout || ""}${e.stderr || ""}${e.message}`;
-  }
 }
 
 /** True when running against real hardware. Suites skip themselves otherwise. */

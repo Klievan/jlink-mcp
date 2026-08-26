@@ -47,6 +47,7 @@ jobs:
           echo "node $(node --version)"
           echo "gdb: $(arm-none-eabi-gdb --version | head -1)"
           ls -l /opt/SEGGER/JLink/JLinkExe
+          # Match on vendor ID only, for the same reason as JLINK_SERIAL.
           lsusb | grep -i 1366 || echo "WARNING: no SEGGER device on the bus"
 
       - run: npm ci
@@ -62,6 +63,11 @@ jobs:
           HIL: "1"
           HIL_RECORD: ${{ inputs.record && '1' || '0' }}
           JLINK_DEVICE: NRF52840_XXAA
+          # Select by serial, never by USB product ID. The OB's PID changes
+          # with its interface set (1366:1061 with mass storage, 1366:1060
+          # without), so a PID match silently finds nothing the moment that
+          # changes — which has already caused one outage on this rig.
+          JLINK_SERIAL: "1050298247"
           # Emit raw probe/GDB output so the run's log carries the exact text
           # the parsers consume. That is the layer the unit tier replays, and
           # it is not recoverable from tool output, which is already parsed.

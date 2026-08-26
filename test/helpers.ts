@@ -88,10 +88,12 @@ export class StubBackend extends ProbeBackend {
   async resume(): Promise<CommandResult> { return this.ok(); }
   async reset(): Promise<CommandResult> { return this.ok(); }
   async step(): Promise<CommandResult> { return this.ok(); }
-  async readMemory(): Promise<CommandResult> {
+  async readMemory(_address: number, _length: number): Promise<CommandResult> {
     return this.memoryResponses.shift() ?? this.ok();
   }
-  async writeMemory(): Promise<CommandResult> { return this.ok(); }
+  // Declared with its real parameters so subclasses can override it. The
+  // no-arg form typechecked as a stub but made any override incompatible.
+  async writeMemory(_address: number, _value: number): Promise<CommandResult> { return this.ok(); }
   async readAllRegisters(): Promise<CommandResult> { return this.ok(); }
   async readRegister(): Promise<CommandResult> { return this.ok(); }
   async flash(): Promise<CommandResult> { return this.ok(); }

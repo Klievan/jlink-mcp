@@ -696,12 +696,27 @@ export class JLinkMcpServer {
    * is visible rather than silent.
    */
   private async clearDebugState(): Promise<string> {
+    const notes: string[] = [];
     try {
       const r = await this.probe.clearBreakpoints();
-      return r.success ? " (breakpoints cleared)" : " (warning: could not clear breakpoints)";
+      notes.push(r.success ? "breakpoints cleared" : "WARNING: could not clear breakpoints");
     } catch {
-      return " (warning: could not clear breakpoints)";
+      notes.push("WARNING: could not clear breakpoints");
     }
+
+    // Zero the FPB comparators directly as well. Clearing breakpoints through
+    // the debugger only removes the ones it knows about — a session that died
+    // abruptly, or one whose breakpoints were set by other means, leaves
+    // comparators armed that no `delete` will reach. Those are what turn a
+    // healthy board into one that HardFaults three instructions into reset,
+    // and a probe-issued reset does not clear them.
+    try {
+      const d = await this.probe.disarmDebugState();
+      notes.push(d.ok ? "debug hardware disarmed" : `WARNING: ${d.detail}`);
+    } catch {
+      notes.push("WARNING: could not disarm debug hardware");
+    }
+    return ` (${notes.join("; ")})`;
   }
 
   /**
