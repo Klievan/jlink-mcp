@@ -133,6 +133,44 @@ describe("decodeFaultRegisters", () => {
   });
 });
 
+describe("decodeFaultRegisters — debug events", () => {
+  // The fault that actually happened on the DK: CFSR clear, HFSR.DEBUGEVT
+  // set, stacked PC three instructions into the reset handler. Nothing in the
+  // firmware was wrong — a debug resource from an earlier session was still
+  // armed, and with no debugger attached the debug event escalated straight
+  // to HardFault. Without DFSR this decodes to "a debug event happened",
+  // which is true and useless.
+  test("names the debug event when HFSR reports DEBUGEVT", () => {
+    const out = decodeFaultRegisters(0x00000000, 0x80000000, 0, 0, 0x00000002);
+    assert.match(out, /DEBUGEVT/);
+    assert.match(out, /BKPT/);
+    assert.match(out, /breakpoint/i);
+  });
+
+  test("distinguishes a vector catch from a breakpoint", () => {
+    assert.match(decodeFaultRegisters(0, 0x80000000, 0, 0, 0x08), /VCATCH/);
+    assert.doesNotMatch(decodeFaultRegisters(0, 0x80000000, 0, 0, 0x08), /BKPT/);
+  });
+
+  test("says what to do about it", () => {
+    const out = decodeFaultRegisters(0, 0x80000000, 0, 0, 0x02);
+    assert.match(out, /Clear breakpoints/i);
+    assert.match(out, /survives the reset/i, "the non-obvious part is why a reset does not fix it");
+  });
+
+  test("stays quiet when DFSR is clear", () => {
+    const out = decodeFaultRegisters(0, 0x80000000, 0, 0, 0);
+    assert.match(out, /DEBUGEVT/);
+    assert.doesNotMatch(out, /DFSR=/);
+  });
+
+  test("does not claim a debug event for an ordinary bus fault", () => {
+    const out = decodeFaultRegisters(0x00008200, 0x40000000, 0, 0, 0);
+    assert.match(out, /PRECISERR/);
+    assert.doesNotMatch(out, /DEBUGEVT/);
+  });
+});
+
 describe("readFaultRegisters — end to end from a memory transcript", () => {
   test("decodes the J-Link dump into CFSR/HFSR/MMFAR/BFAR", async () => {
     const backend = new StubBackend();

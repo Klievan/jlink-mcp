@@ -461,24 +461,32 @@ export abstract class ProbeBackend {
   async readFaultRegisters(): Promise<{
     result: CommandResult;
     decoded: string;
-    raw: { cfsr: number; hfsr: number; mmfar: number; bfar: number };
+    raw: { cfsr: number; hfsr: number; dfsr: number; mmfar: number; bfar: number };
   }> {
     const result = await this.readMemory(0xE000ED28, 20);
     const dump = this.parseMemoryDump(result.rawOutput);
 
-    let cfsr = 0, hfsr = 0, mmfar = 0, bfar = 0;
+    let cfsr = 0, hfsr = 0, dfsr = 0, mmfar = 0, bfar = 0;
     if (dump.length > 0) {
       const allHex = dump.map((d) => d.hex).join(" ");
       const bytes = allHex.split(/\s+/).filter(Boolean);
       if (bytes.length >= 16) {
         cfsr = parseLittleEndian32(bytes, 0);
         hfsr = parseLittleEndian32(bytes, 4);
+        // 0xE000ED30, between HFSR and MMFAR. It names which debug event
+        // fired, which is the only way to tell a leftover breakpoint apart
+        // from a genuine fault when HFSR reports DEBUGEVT and CFSR is clear.
+        dfsr = parseLittleEndian32(bytes, 8);
         mmfar = parseLittleEndian32(bytes, 12);
         bfar = parseLittleEndian32(bytes, 16);
       }
     }
 
-    return { result, decoded: decodeFaultRegisters(cfsr, hfsr, mmfar, bfar), raw: { cfsr, hfsr, mmfar, bfar } };
+    return {
+      result,
+      decoded: decodeFaultRegisters(cfsr, hfsr, mmfar, bfar, dfsr),
+      raw: { cfsr, hfsr, dfsr, mmfar, bfar },
+    };
   }
 }
 
@@ -496,7 +504,7 @@ export function parseLittleEndian32(bytes: string[], offset: number): number {
   ) >>> 0;
 }
 
-export function decodeFaultRegisters(cfsr: number, hfsr: number, mmfar: number, bfar: number): string {
+export function decodeFaultRegisters(cfsr: number, hfsr: number, mmfar: number, bfar: number, dfsr = 0): string {
   const lines: string[] = [];
   const mmfsr = cfsr & 0xFF;
   const bfsr = (cfsr >> 8) & 0xFF;
@@ -540,7 +548,25 @@ export function decodeFaultRegisters(cfsr: number, hfsr: number, mmfar: number, 
     lines.push("## HardFault (HFSR):");
     if (hfsr & 0x02) lines.push("  - VECTTBL: Vector table read fault");
     if (hfsr & 0x40000000) lines.push("  - FORCED: Forced HardFault (escalated from configurable fault)");
-    if (hfsr & 0x80000000) lines.push("  - DEBUGEVT: Debug event triggered HardFault");
+    if (hfsr & 0x80000000) {
+      lines.push("  - DEBUGEVT: Debug event triggered HardFault");
+      // Decode which debug event. With CFSR clear this is almost always a
+      // debug resource left armed by an earlier session rather than a bug in
+      // the firmware — the debug block is not cleared by the reset a probe
+      // issues, so a stale breakpoint or vector catch keeps firing and, with
+      // nothing attached to handle it, escalates to HardFault.
+      const causes: string[] = [];
+      if (dfsr & 0x01) causes.push("HALTED (step or halt request)");
+      if (dfsr & 0x02) causes.push("BKPT (breakpoint — FPB comparator or BKPT instruction)");
+      if (dfsr & 0x04) causes.push("DWTTRAP (watchpoint)");
+      if (dfsr & 0x08) causes.push("VCATCH (vector catch)");
+      if (dfsr & 0x10) causes.push("EXTERNAL (external debug request)");
+      if (causes.length) {
+        lines.push(`    DFSR=0x${dfsr.toString(16).padStart(8, "0")}: ${causes.join(", ")}`);
+        lines.push("    A debug resource is still armed on this target. Clear breakpoints,");
+        lines.push("    then reset. Debug state survives the reset a probe issues.");
+      }
+    }
   }
 
   return lines.join("\n");
