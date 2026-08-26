@@ -56,6 +56,19 @@ export class GDBClient {
    * which returns before `withPreflight` is ever reached.
    */
   private queue: Promise<unknown> = Promise.resolve();
+  /**
+   * True once a run command has started the target and no stop has been seen.
+   *
+   * While the target runs, GDB is blocked inside its resume loop and does not
+   * read stdin at all — the J-Link GDB Server does not support asynchronous
+   * remote execution, so `set mi-async on` does not change this. Any command
+   * sent in that window is never processed and simply times out.
+   *
+   * Observed on hardware: after one `continue`, every subsequent command sat
+   * for exactly the 10s timeout, and the GDB server logged nothing after
+   * "Starting target CPU...".
+   */
+  private targetRunning = false;
   private stopEvent: string | null = null;
   private history: string[] = [];
   private maxHistory = 200;
@@ -218,6 +231,18 @@ export class GDBClient {
       return { success: false, output: "", error: "GDB not connected. Use gdb_connect first." };
     }
 
+    // Refuse rather than hang. GDB will not read this command until the
+    // target stops, so waiting on it buys nothing but a timeout — and a
+    // timeout returns empty output, which reads like a healthy quiet target
+    // rather than "you need to halt first".
+    if (this.targetRunning) {
+      return {
+        success: false,
+        output: "",
+        error: "Target is running; GDB cannot accept commands until it stops. Use halt (or gdb_wait if you expect a breakpoint).",
+      };
+    }
+
     // Throttle rapid commands to avoid overwhelming slow adapters (e.g., ST-Link V2.1)
     const now = Date.now();
     const elapsed = now - this.lastCommandTime;
@@ -262,6 +287,7 @@ export class GDBClient {
       }
       // Check if target is still running (we timed out waiting)
       if (rawOutput.includes("^running") && !rawOutput.includes("*stopped")) {
+        this.targetRunning = true;
         return {
           success: true,
           output: `Target is running. Use gdb_wait to poll for stop events.\nLast output: ${output}`,
@@ -342,6 +368,44 @@ export class GDBClient {
     return this.history.slice(-count);
   }
 
+  /**
+   * Stop a running target.
+   *
+   * Sends SIGINT to the GDB process rather than a command on stdin. With a
+   * synchronous remote — which is what the J-Link GDB Server gives us — GDB
+   * blocks in its resume loop while the target executes and does not read
+   * stdin, so `interrupt` and `monitor halt` typed as commands are never seen.
+   * SIGINT is the only channel GDB is still listening on, and it forwards the
+   * interrupt to the remote.
+   */
+  async interrupt(timeout: number = 5000): Promise<GDBResponse> {
+    if (!this.proc || !this.connected) {
+      return { success: false, output: "", error: "GDB not connected" };
+    }
+    if (!this.targetRunning) {
+      return { success: true, output: "Target already stopped" };
+    }
+
+    this.stopEvent = null;
+    log("[GDB] Interrupting target with SIGINT");
+    try {
+      this.proc.kill("SIGINT");
+    } catch (e: any) {
+      return { success: false, output: "", error: `Failed to signal GDB: ${e.message}` };
+    }
+
+    const started = Date.now();
+    while (Date.now() - started < timeout) {
+      if (!this.targetRunning) {
+        const reason = this.stopEvent || "interrupted";
+        this.stopEvent = null;
+        return { success: true, output: `Target stopped: ${reason}`, stopReason: reason };
+      }
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    return { success: false, output: "", error: "Target did not stop within timeout after SIGINT" };
+  }
+
   /** Check if connected */
   isConnected(): boolean {
     return this.connected && !!this.proc;
@@ -362,6 +426,7 @@ export class GDBClient {
     this.outputBuffer = "";
     this.pending = null;
     this.stopEvent = null;
+    this.targetRunning = false;
   }
 
   // ── Internal ─────────────────────────────────────────────────────
@@ -376,6 +441,7 @@ export class GDBClient {
     const stopMatch = text.match(/\*stopped,reason="([^"]*)"/);
     if (stopMatch) {
       this.stopEvent = this.formatStopReason(text);
+      this.targetRunning = false;
       log(`[GDB] Stop event: ${this.stopEvent}`);
     }
 

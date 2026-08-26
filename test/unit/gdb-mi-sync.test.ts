@@ -101,6 +101,32 @@ describe("GDB/MI response synchronisation", { skip }, () => {
       "'no registers now' should invalidate the session");
   });
 
+  test("commands are refused fast while the target runs, not left to hang", { timeout: 30_000 }, async () => {
+    await startBare();
+    // While the target executes, a synchronous remote leaves GDB inside its
+    // resume loop, not reading stdin. Waiting on a command there buys nothing
+    // but the full timeout — and a timeout returns empty output, which reads
+    // like a healthy quiet target rather than "halt first". Observed on
+    // hardware as every command after a `continue` sitting for exactly 10s.
+    (client as any).targetRunning = true;
+    const started = Date.now();
+    const r = await client.command("print 1");
+    const elapsed = Date.now() - started;
+    (client as any).targetRunning = false;
+
+    assert.equal(r.success, false);
+    assert.match(r.error ?? "", /running/i);
+    assert.match(r.error ?? "", /halt/i, "the error should say what to do about it");
+    assert.ok(elapsed < 1000, `took ${elapsed}ms — should refuse immediately`);
+  });
+
+  test("interrupt on an already-stopped target is a no-op, not an error", { timeout: 30_000 }, async () => {
+    await startBare();
+    const r = await client.interrupt(1000);
+    assert.equal(r.success, true);
+    assert.match(r.output, /already stopped/i);
+  });
+
   test("concurrent commands each receive their own reply", { timeout: 30_000 }, async () => {
     await startBare();
     // Fired without awaiting in between — the shape an MCP server produces

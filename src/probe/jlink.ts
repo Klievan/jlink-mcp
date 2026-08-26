@@ -295,18 +295,24 @@ export class JLinkBackend extends ProbeBackend {
   }
   async halt(): Promise<CommandResult> {
     if (this.useGdb()) {
-      // `interrupt` first, so GDB itself stops the target and updates its own
-      // view of the execution state. `monitor halt` stops the CPU behind
-      // GDB's back: the core is genuinely halted but GDB still believes it is
-      // running, and every subsequent query either errors or blocks until it
-      // times out. On hardware that showed up as read_registers returning
-      // nothing at all through a session that was otherwise healthy.
+      // Halt out-of-band, not through the command channel.
       //
-      // Requires asynchronous MI, which the client enables at connect. Fall
-      // back to `monitor halt` when interrupt is refused — notably when the
-      // target is already stopped, where there is nothing to interrupt.
-      const r = await this.runViaGdb("interrupt", 5000);
-      if (r.success && !/error|not being run|Undefined command/i.test(r.output)) return r;
+      // The J-Link GDB Server is a synchronous remote, so while the target
+      // runs GDB sits in its resume loop and stops reading stdin altogether.
+      // A halt typed as a command — `interrupt` or `monitor halt` — is never
+      // read, and just times out. Confirmed on hardware: after one `continue`
+      // the GDB server logged nothing further, and every subsequent command
+      // sat for the full client timeout. SIGINT is the only channel GDB is
+      // still listening on.
+      const bridge = this.gdbBridge;
+      if (bridge?.interrupt) {
+        const r = await bridge.interrupt(5000);
+        if (r.success) {
+          return { success: true, rawOutput: r.output, output: r.output, error: r.error };
+        }
+      }
+      // No out-of-band channel, or it failed: the target is most likely
+      // already stopped, where `monitor halt` is both safe and sufficient.
       return this.runViaGdb("monitor halt", 5000);
     }
     return this.withPreflight("halt", () => this.execRaw(["halt"]));
