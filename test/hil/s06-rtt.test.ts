@@ -22,6 +22,13 @@ describe("S6 — RTT logging and the down channel", { skip }, () => {
     await hil.expectOk("flash", { filePath: RTT_FIXTURE_HEX });
     await hil.expectOk("gdb_server_start");
     await sleep(1500);
+    // Disarm before starting, not just on teardown. Debug comparators live on
+    // the target and survive both reset and reflash, so this suite inherits
+    // whatever earlier suites armed — and an address armed against the old
+    // fixture traps in this one too, because comparators match addresses, not
+    // images. S2b steps the old fixture's loop at 0x44, which is where this
+    // firmware happens to put the hot path of rtt_puts.
+    await hil.expectOk("clear_breakpoints");
     // Get the target running BEFORE connecting RTT. The probe locates the RTT
     // control block by scanning RAM at connect time, and this firmware writes
     // it at boot — as SEGGER's own does, deliberately, so a half-booted target
@@ -63,6 +70,15 @@ describe("S6 — RTT logging and the down channel", { skip }, () => {
     const cb = await hil.expectOk("read_memory", { address: hex(sym("_SEGGER_RTT")), length: 48 });
     record("hil-rtt-controlblock.txt", cb);
     parts.push(`control block:\n${cb}`);
+
+    // What debug hardware is armed? A comparator matching an address this
+    // firmware executes produces a SIGTRAP that looks exactly like a hang.
+    const fpb = await hil.expectOk("read_memory", { address: "0xe0002000", length: 48 });
+    const dwt = await hil.expectOk("read_memory", { address: "0xe0001000", length: 96 });
+    const demcr = await hil.expectOk("read_memory", { address: "0xe000edfc", length: 4 });
+    record("hil-debug-hardware.txt", [`FPB (FP_CTRL, FP_REMAP, FP_COMP0..):\n${fpb}`,
+                                      `DWT:\n${dwt}`, `DEMCR:\n${demcr}`].join("\n\n"));
+    parts.push(`FP_CTRL+comparators:\n${fpb}`, `DEMCR:\n${demcr}`);
 
     // Does the counter move across a genuine run window?
     await hil.expectOk("halt");
