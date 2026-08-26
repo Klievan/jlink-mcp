@@ -233,6 +233,32 @@ export class JLinkBackend extends ProbeBackend {
     return !!this.gdbBridge?.isConnected();
   }
 
+  /**
+   * Translate a caller-supplied register name into what GDB accepts.
+   *
+   * The `read_register` tool documents J-Link-style names ('PC', 'SP',
+   * 'R0'), but GDB's register names are lowercase and case-sensitive —
+   * `info registers PC` fails with "Invalid register `PC'". Strip an
+   * optional `$` sigil, lowercase, and map the J-Link-only spellings
+   * that have a GDB equivalent.
+   */
+  private static toGdbRegName(name: string): string {
+    const n = name.trim().replace(/^\$/, "").toLowerCase();
+    const aliases: Record<string, string> = {
+      "sp(r13)": "sp",
+      "lr(r14)": "lr",
+      "pc(r15)": "pc",
+      r13: "sp",
+      r14: "lr",
+      r15: "pc",
+      psr: "xpsr",
+      apsr: "xpsr",
+      epsr: "xpsr",
+      ipsr: "xpsr",
+    };
+    return aliases[n] ?? n;
+  }
+
   /** Wrap a GDB command result in the shared `CommandResult` shape. */
   private async runViaGdb(cmd: string, timeoutMs: number = 10000): Promise<CommandResult> {
     const r = await this.gdbBridge!.command(cmd, timeoutMs);
@@ -265,8 +291,21 @@ export class JLinkBackend extends ProbeBackend {
     if (this.useGdb()) {
       // `monitor reset` on J-Link halts by default; add an explicit
       // `monitor go` to resume when the caller asked for run-after-reset.
-      const cmd = halt ? "monitor reset" : "monitor reset\nmonitor go";
-      return this.runViaGdb(cmd, 5000);
+      //
+      // These MUST be two separate `command()` calls. GDBClient writes the
+      // string straight to stdin and resolves on the first `^done`/`(gdb)`,
+      // so a "cmd\ncmd" string leaves the second response orphaned in the
+      // shared output buffer, where it can satisfy the *next* command's
+      // completion check and desync every reply after it.
+      const reset = await this.runViaGdb("monitor reset", 5000);
+      if (halt || !reset.success) return reset;
+      const go = await this.runViaGdb("monitor go", 5000);
+      return {
+        success: go.success,
+        rawOutput: [reset.rawOutput, go.rawOutput].filter(Boolean).join("\n"),
+        output: [reset.output, go.output].filter(Boolean).join("\n"),
+        error: go.error,
+      };
     }
     // Reset doesn't need preflight — it IS the recovery action
     return this.acquireLock(() => this.execRaw(halt ? ["r", "halt"] : ["r", "go"]));
@@ -295,7 +334,7 @@ export class JLinkBackend extends ProbeBackend {
     return this.withPreflight("readAllRegisters", () => this.execRaw(["halt", "regs"]));
   }
   async readRegister(name: string): Promise<CommandResult> {
-    if (this.useGdb()) return this.runViaGdb(`info registers ${name}`, 5000);
+    if (this.useGdb()) return this.runViaGdb(`info registers ${JLinkBackend.toGdbRegName(name)}`, 5000);
     return this.withPreflight("readRegister", () => this.execRaw(["halt", `rreg ${name}`]));
   }
 
