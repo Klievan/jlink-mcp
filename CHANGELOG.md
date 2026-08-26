@@ -1,5 +1,61 @@
 # Changelog
 
+## Unreleased
+
+Another hardware round, and another set of operations that reported success
+while doing nothing. Each one here was hidden behind the one before it: fixing
+reset made reset actually happen, which exposed the teardown; fixing the
+teardown exposed a GDB server that had already exited; fixing that left one
+clean question about RTT, which a diagnostic answered in a single run.
+
+### Fixed
+
+- **`reset` did nothing at all, and said it worked.** The J-Link GDB server is
+  a synchronous remote and stops reading stdin while the target runs, so every
+  command of the reset sequence was refused in turn and the failure discarded.
+  A reset is a recovery action — the moment you reach for one is exactly when
+  the target is running — so it now halts out of band first. `reset(halt)`
+  also verifies its own postcondition, following VTOR to the reset vector
+  rather than assuming the vector table sits at zero.
+- **Session teardown never disarmed anything.** `disarmDebugState()` writes FPB
+  comparators, DWT functions, `FP_CTRL` and `DEMCR` through the debug channel,
+  and teardown happens while the target is running by definition — so the
+  whole routine was refused, write by write, and reported "debug hardware
+  disarmed" regardless. The guarantee that a session leaves the target
+  bootable had never actually held over a live session. It halts first now.
+- **A GDB server was reported running when it had already exited.** Startup
+  returned on the spawn without waiting to see whether it got the probe. A
+  J-Link serves one client at a time, so when another process still holds it
+  the server prints "Connecting to J-Link failed" and exits about 200 ms
+  later. One test suite tore down and the next started 2.2 s later, lost the
+  probe, and ran its entire length with no GDB server and no RTT. Startup now
+  waits for the server's own readiness banner and retries a busy probe: a USB
+  device is not free the instant the process holding it is signalled.
+- **RTT went silent after a target reset.** Sampling SEGGER's control block
+  from both ends showed the target's write pointer moving 582 to 802 while the
+  host's read pointer stayed at 0 — the firmware was still logging and the
+  probe had stopped collecting. Reconnecting the telnet client cannot help;
+  that is downstream of the collector. `reset` now restarts collection via
+  `SetRTTAddr`, and where it cannot it says so rather than leaving a dead
+  stream looking like a quiet target.
+
+### Changed
+
+- **Reset strategy is selectable**, via `strategy` on the `reset` tool
+  (`RSetType` / `monitor reset <type>`). Omitting it lets J-Link pick the right
+  sequence for the device, which is what SEGGER recommends. The hand-rolled
+  `DEMCR.VC_CORERESET` vector catch is gone: J-Link's default Cortex-M strategy
+  already does exactly that, and doing it by hand opted out of the per-device
+  handling. Backends with no numeric reset types refuse an explicit strategy
+  rather than quietly resetting some other way.
+
+### Added
+
+- **`JLINK_RTT_ADDR`** / `jlinkMcp.rtt.controlBlockAddress` — the address of
+  your firmware's `_SEGGER_RTT` symbol. J-Link locates the control block by
+  scanning RAM and never reports the address back, so supplying it is what
+  allows RTT to survive a reset.
+
 ## 0.4.0
 
 The first release with a hardware test suite behind it. Every fix below was
