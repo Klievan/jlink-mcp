@@ -278,15 +278,26 @@ describe("S6 — RTT logging and the down channel", { skip }, () => {
     const before = await counter();
     assert.ok(before > 0, `counter should have been climbing before the reset, got ${before}`);
 
+    // The resume is load-bearing. A halting reset stops the core *at* the
+    // reset vector — before Reset_Handler runs, so before .bss is zeroed — and
+    // the counter still holds whatever it had reached. Reading it there and
+    // expecting zero asserts something a halting reset cannot produce, which
+    // is how this check first read a working reset as a broken one:
+    //
+    //   test_counter went 7027559 -> 7982649
+    //
+    // That was the count at the moment of the halt, not a counter that failed
+    // to restart. Let the firmware actually start, then look.
     await hil.expectOk("reset", { halt: true });
+    await hil.expectOk("resume");
+    await sleep(400);
+
     const after = await counter();
     record("hil-reset-counter.txt", `test_counter: ${before} -> ${after}`);
     assert.ok(after < before,
-      `test_counter went ${before} -> ${after}: it did not restart, so the reset did not take. ` +
-      `The counter only ever climbs while the firmware runs, so a lower value is the firmware ` +
-      `having started again.`);
-
-    await hil.expectOk("resume");
+      `test_counter went ${before} -> ${after}: the firmware did not start over, so the reset ` +
+      `did not take. The counter lives in .bss and is zeroed by Reset_Handler, then only ever ` +
+      `climbs — so after a reset and a resume it must be well below where it was.`);
 
     // And the server should still be up to have served it.
     assert.match(await hil.expectOk("gdb_server_status"), /"running": true/);
