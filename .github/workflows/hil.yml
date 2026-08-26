@@ -35,7 +35,11 @@ jobs:
         # Pre-run, always: the previous job may have left the target halted,
         # a GDB server orphaned, or the probe wedged. --check-target also
         # verifies SWD actually answers before we bother building.
-        run: sudo -n /usr/local/bin/hil-recover --check-target
+        #
+        # No sudo here: the runner's passwordless grant is scoped to
+        # hil-power-cycle, which hil-recover invokes itself when it needs to
+        # cut power. Wrapping hil-recover in sudo just hits a password prompt.
+        run: /usr/local/bin/hil-recover --check-target
 
       - name: Environment report
         # Cheap, and the first thing worth reading when a run fails oddly.
@@ -72,4 +76,4 @@ jobs:
         # always(): a failed run is exactly when the probe most needs
         # resetting, and leaving it wedged breaks the *next* job too.
         if: always()
-        run: sudo -n /usr/local/bin/hil-recover --power-cycle || true
+        run: /usr/local/bin/hil-recover --power-cycle || true

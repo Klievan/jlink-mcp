@@ -143,18 +143,16 @@ export function record(name: string, content: string): void {
 /**
  * Ask the runner's recovery script to put the probe back in a known state.
  *
- * Gated on the script existing so the suite can be exercised on a dev box.
- * Note the runner only grants passwordless sudo to the specific recovery and
- * power-cycle helpers, so this must invoke them by their exact absolute paths.
+ * Invoked without sudo on purpose. The runner's passwordless grant is scoped
+ * to /usr/local/bin/hil-power-cycle, which hil-recover calls itself when it
+ * needs to cut power; running hil-recover under sudo just hits a password
+ * prompt. Gated on the script existing so this still runs on a dev box.
  */
 export function hilRecover(args: string[] = []): string {
   const script = "/usr/local/bin/hil-recover";
   if (!fs.existsSync(script)) return "hil-recover not present (not on the HIL runner)";
   try {
-    return execFileSync("sudo", ["-n", script, ...args], {
-      encoding: "utf8",
-      timeout: 120_000,
-    });
+    return execFileSync(script, args, { encoding: "utf8", timeout: 120_000 });
   } catch (e: any) {
     return `hil-recover failed: ${e.stdout || ""}${e.stderr || ""}${e.message}`;
   }
