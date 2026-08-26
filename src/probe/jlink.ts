@@ -278,6 +278,35 @@ export class JLinkBackend extends ProbeBackend {
     return aliases[n] ?? n;
   }
 
+  /**
+   * Translate a caller-supplied register name into what J-Link Commander's
+   * `rreg` accepts.
+   *
+   * J-Link names the core registers architecturally — `R15 (PC)`, `R13 (SP)`,
+   * `R14` — and rejects the ARM mnemonics outright:
+   *
+   *     J-Link> rreg PC
+   *     Illegal register name.
+   *     R0, R1, ... R13 (SP), R14, R15 (PC), XPSR, MSP, PSP, ...
+   *
+   * The read_register tool documents 'PC', 'SP' and 'R0' as its examples, so
+   * without this mapping two of its own three examples fail. MSP, PSP, XPSR,
+   * CONTROL and friends are already spelled the way J-Link wants and pass
+   * straight through.
+   */
+  private static toJLinkRegName(name: string): string {
+    const n = name.trim().replace(/^\$/, "").toUpperCase();
+    const aliases: Record<string, string> = {
+      PC: "R15",
+      SP: "R13",
+      LR: "R14",
+      "SP(R13)": "R13",
+      "R14(LR)": "R14",
+      "R15(PC)": "R15",
+    };
+    return aliases[n] ?? n;
+  }
+
   /** Wrap a GDB command result in the shared `CommandResult` shape. */
   private async runViaGdb(cmd: string, timeoutMs: number = 10000): Promise<CommandResult> {
     const r = await this.gdbBridge!.command(cmd, timeoutMs);
@@ -354,7 +383,8 @@ export class JLinkBackend extends ProbeBackend {
   }
   async readRegister(name: string): Promise<CommandResult> {
     if (this.useGdb()) return this.runViaGdb(`info registers ${JLinkBackend.toGdbRegName(name)}`, 5000);
-    return this.withPreflight("readRegister", () => this.execRaw(["halt", `rreg ${name}`]));
+    return this.withPreflight("readRegister",
+      () => this.execRaw(["halt", `rreg ${JLinkBackend.toJLinkRegName(name)}`]));
   }
 
   /**

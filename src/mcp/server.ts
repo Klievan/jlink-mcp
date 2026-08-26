@@ -631,7 +631,17 @@ export class JLinkMcpServer {
 
     this.server.tool("get_config", "Get current probe and server configuration", {},
       async () => {
-        return { content: [{ type: "text", text: JSON.stringify({ probe: probe.type, displayName: probe.displayName, supportsRTT: probe.supportsRTT(), gdbServer: probe.getGDBServerStatus() }, null, 2) }] };
+        // The configured target device belongs here: this is the tool an LLM
+        // calls to ask "what am I pointed at?", and without it `set_device`
+        // has no observable effect through the config surface at all.
+        return { content: [{ type: "text", text: JSON.stringify({
+          probe: probe.type,
+          displayName: probe.displayName,
+          device: probe.getDeviceName(),
+          deviceConfigured: probe.isDeviceConfigured(),
+          supportsRTT: probe.supportsRTT(),
+          gdbServer: probe.getGDBServerStatus(),
+        }, null, 2) }] };
       }
     );
   }

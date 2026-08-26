@@ -28,7 +28,10 @@ describe("S0 — discovery and configuration", { skip: !ON_HIL_RUNNER && "requir
   test("get_config reflects the configured device", async () => {
     const out = await hil.expectOk("get_config");
     record("hil-get-config.txt", out);
-    assert.match(out, new RegExp(NRF52840.device, "i"));
+    // get_config used to omit the target device entirely, which made
+    // set_device unverifiable through the config surface and left an LLM
+    // asking "what am I pointed at?" with no answer.
+    assert.match(out, new RegExp(NRF52840.device, "i"), 'get_config does not report the configured device');
   });
 
   test("device_info returns something about the target", async () => {

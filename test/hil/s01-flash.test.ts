@@ -1,6 +1,6 @@
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { HilClient, NRF52840, ON_HIL_RUNNER, record, word32, FIXTURE_HEX } from "./harness/mcp-client";
+import { HilClient, NRF52840, ON_HIL_RUNNER, record, word32, hex, FIXTURE_HEX } from "./harness/mcp-client";
 import { repoRoot } from "../helpers";
 import * as path from "path";
 
@@ -13,7 +13,7 @@ describe("S1 — erase, flash, verify", { skip: !ON_HIL_RUNNER && "requires HIL=
 
   test("erase leaves flash blank", async () => {
     await hil.expectOk("erase");
-    const out = await hil.expectOk("read_memory", { address: 0, length: 16 });
+    const out = await hil.expectOk("read_memory", { address: hex(0), length: 16 });
     record("hil-read-erased-flash.txt", out);
     assert.equal(word32(out, 0), 0xffffffff, "erased flash should read back all ones");
   });
@@ -25,7 +25,7 @@ describe("S1 — erase, flash, verify", { skip: !ON_HIL_RUNNER && "requires HIL=
 
   test("the vector table reads back exactly what we flashed", async () => {
     // Ground truth straight out of the generator — no interpretation.
-    const out = await hil.expectOk("read_memory", { address: 0, length: 16 });
+    const out = await hil.expectOk("read_memory", { address: hex(0), length: 16 });
     record("hil-read-vector-table.txt", out);
     assert.equal(word32(out, 0), FIXTURE.INITIAL_MSP, "initial MSP");
     assert.equal(word32(out, 1), FIXTURE.RESET_HANDLER | 1, "reset vector (Thumb bit set)");
@@ -34,7 +34,7 @@ describe("S1 — erase, flash, verify", { skip: !ON_HIL_RUNNER && "requires HIL=
   });
 
   test("the constant block reads back byte for byte", async () => {
-    const out = await hil.expectOk("read_memory", { address: FIXTURE.CONST_BLOCK, length: 32 });
+    const out = await hil.expectOk("read_memory", { address: hex(FIXTURE.CONST_BLOCK), length: 32 });
     record("hil-read-const-block.txt", out);
 
     // Printable ASCII, then a 00..07 ramp, then an F8..FF run — chosen so the
@@ -45,7 +45,7 @@ describe("S1 — erase, flash, verify", { skip: !ON_HIL_RUNNER && "requires HIL=
   });
 
   test("the spin loop instructions survived the round trip", async () => {
-    const out = await hil.expectOk("read_memory", { address: FIXTURE.SPIN_LOOP, length: 8 });
+    const out = await hil.expectOk("read_memory", { address: hex(FIXTURE.SPIN_LOOP), length: 8 });
     record("hil-read-spin-loop.txt", out);
     // adds r1,#1 / str r1,[r0]  then  b .-8 / nop
     assert.equal(word32(out, 0), 0x60013101);
@@ -56,7 +56,7 @@ describe("S1 — erase, flash, verify", { skip: !ON_HIL_RUNNER && "requires HIL=
     const out = await hil.call("flash", { filePath: "/nonexistent/nope.hex" });
     assert.ok(out.trim().length > 0, "should explain the failure");
     // And the session must survive it.
-    assert.equal(word32(await hil.expectOk("read_memory", { address: 0, length: 4 }), 0),
+    assert.equal(word32(await hil.expectOk("read_memory", { address: hex(0), length: 4 }), 0),
       FIXTURE.INITIAL_MSP, "a failed flash must not wedge the probe");
   });
 });

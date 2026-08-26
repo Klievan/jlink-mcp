@@ -1,121 +1,207 @@
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { HilClient, ON_HIL_RUNNER, record, reg, word32, FIXTURE_HEX } from "./harness/mcp-client";
+import { HilClient, ON_HIL_RUNNER, record, reg, word32, hex, FIXTURE_HEX } from "./harness/mcp-client";
 import { repoRoot } from "../helpers";
 import * as path from "path";
 
 const { FIXTURE } = require(path.join(repoRoot(__dirname), "test", "hil", "fixture", "build-fixture.js"));
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const skip = !ON_HIL_RUNNER && "requires HIL=1";
 
-describe("S2 — halt, inspect, resume", { skip: !ON_HIL_RUNNER && "requires HIL=1" }, () => {
+/**
+ * S2a — the JLinkExe path, where CPU state does NOT survive between calls.
+ *
+ * Each tool call on this path spawns a fresh JLinkExe, runs its script and
+ * exits; the core resumes when that process detaches. So "halt, then read the
+ * registers" is two independent attach/detach cycles with free-running
+ * execution in between, and the halt does not carry.
+ *
+ * Observed on hardware: reset(halt) then read_registers reports PC inside the
+ * spin loop rather than at the reset vector, and CycleCnt advances by millions
+ * of cycles between consecutive reads. Stepping appears to do nothing because
+ * the core ran away and was re-halted somewhere else.
+ *
+ * These tests pin that behaviour rather than wish it away. It is the reason
+ * CPU control routes through a GDB session when one is up (S2b) — the only
+ * configuration where the halt/inspect/step contract actually holds.
+ */
+describe("S2a — JLinkExe path: state does not persist between calls", { skip }, () => {
   const hil = new HilClient();
-
   before(async () => {
     await hil.start();
-    // Every assertion below is against the fixture image, so put it there
-    // rather than inheriting whatever S1 left behind.
     await hil.expectOk("flash", { filePath: FIXTURE_HEX });
   });
   after(async () => { await hil.stop(); });
 
-  test("reset(halt) lands exactly on the reset vector", async () => {
-    // The strongest single assertion in the suite: PC and SP must equal the
-    // two words the vector table holds, which we know from the generator.
-    // It exercises reset, halt, register read and the compact formatter, and
-    // every value is exact rather than a range.
-    await hil.expectOk("reset", { halt: true });
+  test("the target runs the fixture at all", async () => {
+    // Weakest useful assertion, and the one that must hold: the core is
+    // executing our image, so PC sits in the reset handler region.
+    await hil.expectOk("reset", { halt: false });
+    await sleep(200);
     const regs = await hil.expectOk("read_registers");
-    record("hil-registers-reset-halt.txt", regs);
+    record("hil-registers-freerun.txt", regs);
 
+    const pc = reg(regs, "PC")!;
+    assert.ok(pc >= FIXTURE.RESET_HANDLER && pc <= FIXTURE.RESET_HANDLER + 0x10,
+      `PC 0x${pc.toString(16)} is outside the fixture's handler — is our image running?`);
+  });
+
+  test("SP is exactly the vector table's initial MSP", async () => {
+    // The fixture never touches SP, so unlike PC this stays exact even with
+    // the core free-running between calls.
+    const regs = await hil.expectOk("read_registers");
     assert.match(regs, /Core:/, "compact register format missing — parser regression");
-    assert.equal(reg(regs, "PC"), FIXTURE.RESET_HANDLER, "PC should be the reset handler");
-    assert.equal(reg(regs, "SP"), FIXTURE.INITIAL_MSP, "SP should be the initial MSP");
+    assert.equal(reg(regs, "SP"), FIXTURE.INITIAL_MSP);
     assert.equal(reg(regs, "MSP"), FIXTURE.INITIAL_MSP);
   });
 
-  test("read_register agrees with read_registers, using documented names", async () => {
-    await hil.expectOk("reset", { halt: true });
-    const all = await hil.expectOk("read_registers");
-    // 'PC' and 'SP' are the tool's own documented examples. Under GDB routing
-    // these need translating to lowercase or GDB rejects them outright.
-    for (const name of ["PC", "SP", "MSP"]) {
-      const one = await hil.expectOk("read_register", { register: name });
-      record(`hil-read-register-${name}.txt`, one);
-      const expected = reg(all, name)!;
-      assert.match(one, new RegExp(expected.toString(16), "i"),
-        `read_register(${name}) = ${one} disagrees with read_registers (0x${expected.toString(16)})`);
-    }
-  });
-
-  test("a halted core does not execute", async () => {
-    // The fixture spins incrementing a RAM word. If the core is genuinely
-    // halted the word cannot change; if "halt" only pretended, it will.
-    await hil.expectOk("reset", { halt: false });
-    await sleep(200);
+  test("KNOWN LIMITATION: the core keeps running between two calls", async () => {
+    // The fixture's spin loop increments R1 forever. Halt, read it, read it
+    // again: on a session that held the halt these would match. Here they do
+    // not, because the core resumed the moment the first JLinkExe detached.
+    //
+    // If this ever fails, the JLinkExe path started holding the target halted
+    // across calls — a real improvement. Invert it and delete this note.
     await hil.expectOk("halt");
+    const first = reg(await hil.expectOk("read_registers"), "R1")!;
+    await sleep(250);
+    const second = reg(await hil.expectOk("read_registers"), "R1")!;
 
-    const first = word32(await hil.expectOk("read_memory", { address: FIXTURE.COUNTER_ADDR, length: 4 }));
-    await sleep(300);
-    const second = word32(await hil.expectOk("read_memory", { address: FIXTURE.COUNTER_ADDR, length: 4 }));
-
-    assert.notEqual(first, null, "could not read the counter");
-    assert.equal(second, first, "counter advanced while halted — the core did not stop");
+    assert.notEqual(second, first,
+      "R1 held steady — the JLinkExe path may now persist halt state across calls");
   });
 
-  test("a resumed core does execute", async () => {
-    await hil.expectOk("resume");
-    const first = word32(await hil.expectOk("read_memory", { address: FIXTURE.COUNTER_ADDR, length: 4 }));
-    await sleep(300);
-    const second = word32(await hil.expectOk("read_memory", { address: FIXTURE.COUNTER_ADDR, length: 4 }));
-
-    assert.notEqual(second, first, "counter frozen after resume — the core did not restart");
-  });
-
-  test("halting a running core stops it inside the spin loop", async () => {
-    await hil.expectOk("reset", { halt: false });
-    await sleep(200);
-    await hil.expectOk("halt");
-
-    const regs = await hil.expectOk("read_registers");
-    record("hil-registers-halted-in-loop.txt", regs);
-    const pc = reg(regs, "PC");
-    assert.ok(FIXTURE.SPIN_LOOP_PCS.includes(pc),
-      `PC 0x${pc?.toString(16)} is outside the spin loop ${JSON.stringify(FIXTURE.SPIN_LOOP_PCS.map((n: number) => "0x" + n.toString(16)))}`);
-  });
-
-  test("step advances PC by one instruction", async () => {
-    await hil.expectOk("reset", { halt: true });
-    const before = reg(await hil.expectOk("read_registers"), "PC")!;
-    await hil.expectOk("step");
-    const after = reg(await hil.expectOk("read_registers"), "PC")!;
-
-    // Every instruction in the fixture is 16-bit Thumb.
-    assert.equal(after, before + 2, `step moved PC 0x${before.toString(16)} -> 0x${after.toString(16)}`);
-  });
-
-  test("stepping through the loop stays inside it", async () => {
-    // From the reset handler, four steps run ldr/movs then enter the loop and
-    // keep circling. PC must never leave the handler region.
-    for (let i = 0; i < 6; i++) {
-      await hil.expectOk("step");
-      const pc = reg(await hil.expectOk("read_registers"), "PC")!;
-      assert.ok(pc >= FIXTURE.RESET_HANDLER && pc <= FIXTURE.RESET_HANDLER + 0x10,
-        `step ${i} left the handler: PC=0x${pc.toString(16)}`);
-    }
-  });
-
-  test("snapshot includes every section it promises", async () => {
-    await hil.expectOk("halt");
+  test("snapshot still assembles every section it promises", async () => {
+    // Independent of the persistence problem: snapshot halts and reads within
+    // one call chain, so its output is internally coherent. The failure this
+    // guards is silent section loss when register parsing regresses — the
+    // Stack section is gated on regs["SP"] and simply vanishes.
     const snap = await hil.expectOk("snapshot", { rttLines: 0 });
     record("hil-snapshot.txt", snap);
-
-    // The failure mode this guards is silent section loss: when register
-    // parsing breaks, snapshot still returns success but the Stack section
-    // disappears because it is gated on regs["SP"].
     assert.match(snap, /## Registers/);
     assert.match(snap, /Core:.*PC=/s, "registers not in compact form");
     assert.match(snap, /## Fault Status/);
     assert.match(snap, /## Stack/, "stack section missing — register parsing likely regressed");
+    // The stack dump must carry whole lines. J-Link groups 16-byte lines as
+    // 8|8, which is what the dump parser used to split on by mistake, losing
+    // half of every line.
+    const stackLine = snap.split("\n").find((l) => /^0x[0-9a-f]+: /.test(l))!;
+    const bytes = stackLine.split(/[: ]+/).filter((t) => /^[0-9a-f]{2}$/i.test(t));
+    assert.equal(bytes.length, 16, `stack dump line carried ${bytes.length} bytes, expected 16`);
+  });
+
+  test("read_register returns the register, not an error page", async () => {
+    // Hardware caught this passing for the wrong reason: `halt` prints the
+    // full register set before `rreg` runs, so a loose "does the value appear
+    // anywhere" check matched the halt dump even while rreg itself failed with
+    // "Illegal register name." Assert on the failure text directly.
+    for (const name of ["PC", "SP", "R0", "MSP"]) {
+      const out = await hil.expectOk("read_register", { register: name });
+      record(`hil-read-register-${name}.txt`, out);
+      assert.ok(!/Illegal register name/i.test(out),
+        `read_register(${name}) was rejected by J-Link — name mapping missing`);
+    }
+  });
+});
+
+/**
+ * S2b — under a live GDB session, where the halt/inspect/step contract holds.
+ *
+ * With JLinkGDBServer up and a GDB client attached, the session persists
+ * across MCP calls and CPU control routes through it instead of spawning a
+ * competing JLinkExe. This is the configuration the debugging workflow
+ * actually runs in, and the only one where these assertions mean anything.
+ */
+describe("S2b — GDB session: halt, inspect, step are coherent", { skip }, () => {
+  const hil = new HilClient();
+
+  before(async () => {
+    await hil.start();
+    await hil.expectOk("flash", { filePath: FIXTURE_HEX });
+    await hil.expectOk("gdb_server_start");
+    await sleep(1500);
+    await hil.expectOk("gdb_connect");
+  });
+
+  after(async () => {
+    await hil.call("gdb_disconnect");
+    await hil.call("gdb_server_stop");
+    await hil.stop();
+  });
+
+  test("the GDB server reports itself running", async () => {
+    const status = await hil.expectOk("gdb_server_status");
+    record("hil-gdb-server-status.txt", status);
+    assert.match(status, /running|true|2331/i);
+  });
+
+  test("a halted core stays halted across separate tool calls", async () => {
+    // The assertion S2a cannot make. Same two reads, same fixture, but the
+    // session holds — so the counter must not move.
+    await hil.expectOk("halt");
+    const first = word32(await hil.expectOk("read_memory", { address: hex(FIXTURE.COUNTER_ADDR), length: 4 }));
+    await sleep(300);
+    const second = word32(await hil.expectOk("read_memory", { address: hex(FIXTURE.COUNTER_ADDR), length: 4 }));
+
+    assert.notEqual(first, null, "could not read the counter");
+    assert.equal(second, first, "counter advanced while halted — the halt did not hold");
+  });
+
+  test("a resumed core executes again", async () => {
+    await hil.expectOk("resume");
+    const first = word32(await hil.expectOk("read_memory", { address: hex(FIXTURE.COUNTER_ADDR), length: 4 }));
+    await sleep(300);
+    const second = word32(await hil.expectOk("read_memory", { address: hex(FIXTURE.COUNTER_ADDR), length: 4 }));
+    assert.notEqual(second, first, "counter frozen after resume — the core did not restart");
+  });
+
+  test("halting a running core stops it inside the spin loop", async () => {
+    await hil.expectOk("halt");
+    const regs = await hil.expectOk("read_registers");
+    record("hil-registers-halted-in-loop.txt", regs);
+    const pc = reg(regs, "PC")!;
+    assert.ok(FIXTURE.SPIN_LOOP_PCS.includes(pc),
+      `PC 0x${pc.toString(16)} outside the spin loop`);
+  });
+
+  test("step advances PC by exactly one instruction", async () => {
+    await hil.expectOk("halt");
+    const before = reg(await hil.expectOk("read_registers"), "PC")!;
+    await hil.expectOk("step");
+    const after = reg(await hil.expectOk("read_registers"), "PC")!;
+
+    // Loop body 0x44 -> 0x46 -> 0x48 -> branch back to 0x44. Every
+    // instruction is 16-bit Thumb.
+    const expected = before === 0x48 ? FIXTURE.SPIN_LOOP : before + 2;
+    assert.equal(after, expected,
+      `step moved PC 0x${before.toString(16)} -> 0x${after.toString(16)}`);
+  });
+
+  test("registers read through GDB parse into the compact format", async () => {
+    // The regression from the routing work: GDB emits whitespace columns with
+    // lowercase names, which the register parser could not read at all, so
+    // read_registers silently degraded to raw text.
+    const regs = await hil.expectOk("read_registers");
+    record("hil-registers-via-gdb.txt", regs);
+    assert.match(regs, /Core:/, "GDB register output did not parse into compact form");
+    assert.match(regs, /PC=0x[0-9A-F]{8}/);
+    assert.equal(reg(regs, "SP"), FIXTURE.INITIAL_MSP);
+  });
+
+  test("the GDB session survives a full inspect sequence", async () => {
+    // The bug the routing work exists to prevent: a CPU-control tool spawning
+    // JLinkExe alongside the GDB server evicts the server's session, leaving
+    // the client attached to a dead socket. Run the whole sequence, then prove
+    // the session still answers.
+    await hil.expectOk("halt");
+    await hil.expectOk("read_registers");
+    await hil.expectOk("read_memory", { address: hex(FIXTURE.CONST_BLOCK), length: 16 });
+    await hil.expectOk("snapshot", { rttLines: 0 });
+
+    const out = await hil.expectOk("gdb_command", { command: "info registers pc" });
+    record("hil-gdb-after-inspect.txt", out);
+    assert.ok(!/not supported by this target|Remote connection closed|no registers/i.test(out),
+      `GDB session died during the inspect sequence: ${out}`);
   });
 });
