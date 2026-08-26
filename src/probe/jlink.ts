@@ -638,27 +638,105 @@ export class JLinkBackend extends ProbeBackend {
     ];
     if (this.config.serialNumber) args.push("-select", `USB=${this.config.serialNumber}`);
 
-    try {
-      const managed = this.processManager.spawn(GDB_SERVER_PROCESS, this.gdbServerExe, args);
-      managed.process.stdout?.on("data", (d: Buffer) => {
-        for (const line of d.toString().split("\n").filter(Boolean)) {
-          log(`[GDB Server] ${line}`);
-          this.gdbOutputBuffer.push(line);
-          if (this.gdbOutputBuffer.length > 1000) this.gdbOutputBuffer.shift();
+    // Retry a probe that is busy. The usual cause is the previous session's
+    // server: killed a moment ago, but the USB device is not free the instant
+    // the process is signalled. One suite tearing down and the next starting
+    // 2.2 s later was enough to lose the probe for an entire suite.
+    let lastDetail = "";
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const managed = this.processManager.spawn(GDB_SERVER_PROCESS, this.gdbServerExe, args);
+        managed.process.stdout?.on("data", (d: Buffer) => {
+          for (const line of d.toString().split("\n").filter(Boolean)) {
+            log(`[GDB Server] ${line}`);
+            this.gdbOutputBuffer.push(line);
+            if (this.gdbOutputBuffer.length > 1000) this.gdbOutputBuffer.shift();
+          }
+        });
+        managed.process.stderr?.on("data", (d: Buffer) => {
+          for (const line of d.toString().split("\n").filter(Boolean)) {
+            logError(`[GDB Server] ${line}`);
+            this.gdbOutputBuffer.push(`[ERR] ${line}`);
+          }
+        });
+
+        // Spawning is not starting. The server takes a moment to claim the
+        // probe, and if another process still holds it, it prints "Connecting
+        // to J-Link failed" and exits ~200 ms later. Returning success on the
+        // spawn alone reported a running server that was already dead, and
+        // the whole suite that followed ran with no GDB server and no RTT.
+        const ready = await this.awaitGdbServerReady(managed);
+        if (ready.ok) {
+          this.setState(ProbeState.GDB_RUNNING);
+          return { success: true, message: `GDB Server started on port ${this.config.gdbPort}, RTT telnet on port ${this.config.rttTelnetPort}` };
         }
-      });
-      managed.process.stderr?.on("data", (d: Buffer) => {
-        for (const line of d.toString().split("\n").filter(Boolean)) {
-          logError(`[GDB Server] ${line}`);
-          this.gdbOutputBuffer.push(`[ERR] ${line}`);
+
+        lastDetail = ready.detail;
+        this.processManager.kill(GDB_SERVER_PROCESS);
+        this.gdbOutputBuffer = [];
+        if (attempt < 3) {
+          log(`[J-Link] GDB Server did not come up (${ready.detail}); retrying (${attempt + 1}/3)`);
+          await new Promise((r) => setTimeout(r, 1500));
         }
-      });
-      this.setState(ProbeState.GDB_RUNNING);
-      return { success: true, message: `GDB Server started on port ${this.config.gdbPort}, RTT telnet on port ${this.config.rttTelnetPort}` };
-    } catch (err) {
-      logError("Failed to start GDB Server", err);
-      return { success: false, message: `Failed to start GDB Server: ${err instanceof Error ? err.message : String(err)}` };
+      } catch (err) {
+        logError("Failed to start GDB Server", err);
+        return { success: false, message: `Failed to start GDB Server: ${err instanceof Error ? err.message : String(err)}` };
+      }
     }
+
+    this.setState(ProbeState.PROBE_CONNECTED);
+    return {
+      success: false,
+      message:
+        `GDB Server failed to start after 3 attempts: ${lastDetail}. ` +
+        `A J-Link serves one client at a time — check for another JLinkGDBServer or JLinkExe holding the probe.`,
+    };
+  }
+
+  /**
+   * Wait for the GDB server to claim the probe, or to fail trying.
+   *
+   * Readiness is the server's own "Waiting for GDB connection" banner. The
+   * failure to watch for is the probe being held by someone else — most often
+   * the previous session's server, which had been killed moments earlier but
+   * had not yet released the USB device.
+   */
+  private awaitGdbServerReady(
+    managed: { process: { once(e: string, cb: (...a: any[]) => void): void } },
+    timeoutMs = 15000
+  ): Promise<{ ok: boolean; detail: string }> {
+    return new Promise((resolve) => {
+      let done = false;
+      const finish = (ok: boolean, detail: string) => {
+        if (done) return;
+        done = true;
+        clearInterval(poll);
+        clearTimeout(timer);
+        resolve({ ok, detail });
+      };
+
+      // The output already streams into gdbOutputBuffer, so watch that rather
+      // than adding a second listener that could race with the first.
+      const poll = setInterval(() => {
+        const text = this.gdbOutputBuffer.join("\n");
+        if (/waiting for gdb connection/i.test(text)) return finish(true, "ready");
+        const failure = text.match(/(connecting to j-link failed[^\n]*|could not connect to j-link[^\n]*)/i);
+        if (failure) return finish(false, failure[1].trim());
+      }, 50);
+
+      managed.process.once("exit", (code: number | null) => {
+        const text = this.gdbOutputBuffer.join("\n");
+        const reason = text.match(/(connecting to j-link failed[^\n]*)/i)?.[1];
+        finish(false, reason
+          ? `${reason.trim()} (exit code ${code}). Another process is probably holding the probe.`
+          : `server exited with code ${code} before accepting connections`);
+      });
+
+      const timer = setTimeout(
+        () => finish(false, `no readiness banner within ${timeoutMs} ms`),
+        timeoutMs
+      );
+    });
   }
 
   stopGDBServer(): { success: boolean; message: string } {

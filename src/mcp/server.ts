@@ -897,6 +897,12 @@ export class JLinkMcpServer {
    */
   private async clearDebugState(): Promise<string> {
     const notes: string[] = [];
+
+    // `delete breakpoints` is a command like any other, and a synchronous
+    // remote will not read one while the target runs. Halting is not optional
+    // here — it is what makes the rest of this function do anything at all.
+    await this.probe.halt();
+
     try {
       const r = await this.probe.clearBreakpoints();
       notes.push(r.success ? "breakpoints cleared" : "WARNING: could not clear breakpoints");

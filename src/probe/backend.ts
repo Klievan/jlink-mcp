@@ -484,6 +484,20 @@ export abstract class ProbeBackend {
    * prevent the caller from disconnecting.
    */
   async disarmDebugState(): Promise<{ ok: boolean; detail: string }> {
+    // Halt first. Every write below goes through the debug channel, and a
+    // synchronous remote refuses commands outright while the target runs —
+    // so on a running target this whole routine was rejected, write by write,
+    // and reported "debug hardware disarmed" anyway:
+    //
+    //   [GDB] > (refused, target running) set {unsigned int}0xe0002008 = 0x0
+    //   [GDB] > (refused, target running) set {unsigned int}0xe000200c = 0x0
+    //   ... every comparator, then FP_CTRL and DEMCR
+    //
+    // Teardown is exactly when the target is running, so that was the normal
+    // case, not an edge one: the "leave the target bootable" guarantee had
+    // never actually held over a live session.
+    await this.halt();
+
     // FP_COMP0..7. Cortex-M4's FPB has up to six code comparators plus two
     // literal ones, and the register file is contiguous — stopping at six
     // leaves the last two armed. Writing past the implemented set is harmless.
