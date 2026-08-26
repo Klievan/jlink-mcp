@@ -455,9 +455,27 @@ export class JLinkMcpServer {
       }
     );
 
-    this.server.tool("clear_breakpoints", "Clear all breakpoints", {},
-      async () => { const g = this.requireDevice(); if (g) return g;
-        await this.ensureGdbSession(); await probe.clearBreakpoints(); return { content: [{ type: "text", text: "Breakpoints cleared" }] }; }
+    this.server.tool("clear_breakpoints",
+      "Clear all breakpoints, including any left armed in the debug hardware by an earlier session",
+      {},
+      async () => {
+        const g = this.requireDevice(); if (g) return g;
+        await this.ensureGdbSession();
+        // Clearing the debugger's own list is not enough. A comparator armed
+        // by a session that has since exited is invisible to `delete`, stays
+        // armed across reset and reflash, and traps whatever the current image
+        // happens to put at that address. Observed here: a comparator armed
+        // against one fixture's spin loop kept trapping a completely different
+        // firmware that reused the address.
+        //
+        // So "clear all breakpoints" clears the hardware too, which is what
+        // the name promises.
+        await probe.clearBreakpoints();
+        const disarm = await probe.disarmDebugState();
+        return { content: [{ type: "text", text: disarm.ok
+          ? "Breakpoints cleared (debug comparators disarmed)"
+          : `Breakpoints cleared, but ${disarm.detail}` }] };
+      }
     );
 
     // ═══════════════════════════════════════════════════════════════
