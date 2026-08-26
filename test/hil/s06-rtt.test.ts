@@ -1,7 +1,7 @@
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
 import {
-  HilClient, ON_HIL_RUNNER, record, RTT_FIXTURE_HEX, sym, word32, hex,
+  HilClient, ON_HIL_RUNNER, record, RTT_FIXTURE_HEX, sym, word32, hex, reg,
 } from "./harness/mcp-client";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
