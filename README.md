@@ -486,6 +486,7 @@ npm run test:hil  # hardware tier; needs HIL=1 and a probe
 | `JLINK_SERIAL` | | J-Link serial number (multi-probe) |
 | `JLINK_GDB_PORT` | `2331` | GDB server port |
 | `JLINK_RTT_PORT` | `19021` | RTT telnet port |
+| `JLINK_RTT_ADDR` | Auto | Address of the RTT control block (your `_SEGGER_RTT` symbol). J-Link finds this by scanning RAM but never reports it back — supplying it is what lets RTT survive a target reset |
 
 ### OpenOCD
 

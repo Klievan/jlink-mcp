@@ -13,6 +13,14 @@ export interface JLinkConfig {
   serialNumber?: string;
   gdbPort: number;
   rttTelnetPort: number;
+  /**
+   * Address of the SEGGER RTT control block, when it is known.
+   *
+   * J-Link normally locates this itself by scanning RAM. Knowing it lets us
+   * re-point the probe at the block after a target reset, which J-Link does
+   * not do on its own — see restartRTT().
+   */
+  rttControlBlockAddress?: number;
   swoTelnetPort: number;
 }
 
@@ -80,6 +88,7 @@ export class JLinkBackend extends ProbeBackend {
       serialNumber: config.serialNumber,
       gdbPort: config.gdbPort || 2331,
       rttTelnetPort: config.rttTelnetPort || 19021,
+      rttControlBlockAddress: config.rttControlBlockAddress,
       swoTelnetPort: config.swoTelnetPort || 2332,
     };
   }
@@ -792,6 +801,53 @@ export class JLinkBackend extends ProbeBackend {
 
   supportsRTT(): boolean { return true; }
   getRTTPort(): number { return this.config.rttTelnetPort; }
+
+  /**
+   * Re-point the probe at the RTT control block after a target reset.
+   *
+   * A reset does not stop the target logging, but it does stop J-Link
+   * collecting. Measured on an nRF52840 across a reset, sampling the control
+   * block from both sides:
+   *
+   *   WrOff (target writes): 582 -> 802
+   *   RdOff (host reads):      0 ->   0
+   *
+   * The firmware was writing and 582 bytes sat unread in the buffer; the
+   * probe had simply stopped draining it. Reconnecting the telnet client does
+   * not help — that is downstream of the collector, not the collector itself.
+   *
+   * `SetRTTAddr` is the documented way back in: "In some cases J-Link cannot
+   * locate the RTT buffer in known RAM. This command is used to set the exact
+   * address manually." Issuing it restarts collection at that address.
+   *
+   *   https://kb.segger.com/J-Link_Command_Strings
+   *
+   * Requires knowing the address, which J-Link found for itself and does not
+   * report back. Without one, say so rather than leaving a caller believing a
+   * silent stream is a quiet target.
+   */
+  async restartRTT(): Promise<{ ok: boolean; detail: string }> {
+    const addr = this.config.rttControlBlockAddress;
+    if (addr === undefined) {
+      return {
+        ok: false,
+        detail:
+          "RTT collection stops at a target reset and cannot be restarted without the control " +
+          "block address, which the probe finds by scanning RAM and does not report back. Set " +
+          "JLINK_RTT_ADDR (or jlinkMcp.rtt.controlBlockAddress) to your firmware's _SEGGER_RTT " +
+          "symbol to have this recovered automatically.",
+      };
+    }
+
+    const cmd = `SetRTTAddr 0x${addr.toString(16)}`;
+    const r = this.useGdb()
+      ? await this.runViaGdb(`monitor exec ${cmd}`, 5000)
+      : await this.acquireLock(() => this.execRaw([`exec ${cmd}`]));
+
+    return r.success
+      ? { ok: true, detail: `RTT collection restarted at 0x${addr.toString(16)}` }
+      : { ok: false, detail: `could not restart RTT collection: ${r.error ?? "unknown error"}` };
+  }
 
   // ── Lifecycle ────────────────────────────────────────────────────
 

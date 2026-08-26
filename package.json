@@ -219,6 +219,11 @@
           "type": "string",
           "default": "",
           "description": "Path to a CMSIS-SVD file for the target. Enables symbolic peripheral reads (list_peripherals, read_peripheral, decode_register). Vendors publish these; the same file Cortex-Debug uses as svdFile works here."
+        },
+        "jlinkMcp.rtt.controlBlockAddress": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Address of the SEGGER RTT control block (your firmware's `_SEGGER_RTT` symbol), e.g. `0x20000000`. J-Link locates this by scanning RAM and never reports it back, so supplying it is what allows RTT to be recovered after a target reset \u2014 without it, collection stops at the first reset and every later read looks like a quiet target."
         }
       }
     },

@@ -9,6 +9,9 @@
  *   J-Link:
  *     JLINK_DEVICE, JLINK_INSTALL_DIR, JLINK_INTERFACE, JLINK_SPEED,
  *     JLINK_SERIAL, JLINK_GDB_PORT, JLINK_RTT_PORT, JLINK_SWO_PORT
+ *     JLINK_RTT_ADDR - address of the RTT control block (your _SEGGER_RTT
+ *                      symbol). Lets RTT be recovered after a target reset,
+ *                      which otherwise stops collection for good.
  *
  *   OpenOCD:
  *     OPENOCD_BINARY, OPENOCD_INTERFACE, OPENOCD_TARGET,
@@ -66,6 +69,7 @@ function buildProbeConfig(): ProbeFactoryConfig {
           serialNumber: env("JLINK_SERIAL"),
           gdbPort: env("JLINK_GDB_PORT") ? Number(env("JLINK_GDB_PORT")) : undefined,
           rttTelnetPort: env("JLINK_RTT_PORT") ? Number(env("JLINK_RTT_PORT")) : undefined,
+          rttControlBlockAddress: env("JLINK_RTT_ADDR") ? Number(env("JLINK_RTT_ADDR")) : undefined,
           swoTelnetPort: env("JLINK_SWO_PORT") ? Number(env("JLINK_SWO_PORT")) : undefined,
         },
       };
