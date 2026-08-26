@@ -48,7 +48,14 @@ typedef struct {
     rtt_buffer_t aDown[1];
 } rtt_cb_t;
 
-#define UP_SIZE 2048
+/*
+ * 8 KB, sized for the burst test. 100 lines of roughly 60 bytes is ~6 KB, and
+ * at 2 KB the buffer overflowed mid-burst — the fixture dropped the remainder
+ * exactly as designed, but a test that cannot tell a deliberate drop from a
+ * transport failure is not measuring the transport. Sized so a clean run has
+ * no drops at all, which makes any gap in the sequence a real signal.
+ */
+#define UP_SIZE 8192
 #define DOWN_SIZE 64
 
 volatile rtt_cb_t _SEGGER_RTT;
@@ -204,9 +211,18 @@ static void crash_undefined(void)
 
 static void crash_badaddr(void)
 {
-    log_line("err", "hil_fixture", "injected fault: unmapped read");
-    volatile uint32_t v = *(volatile uint32_t *)0xF0000000;
-    (void)v; /* BusFault on an unmapped region */
+    /*
+     * Jump to an unmapped address rather than read one.
+     *
+     * A *read* of 0xF0000000 does not fault on this part — the bus returns
+     * without raising an error, so the original version of this handler ran to
+     * completion and the test reported "did the trigger fire?" for four rounds.
+     * An instruction *fetch* from unmapped space always faults, because the
+     * core cannot proceed without an instruction.
+     */
+    log_line("err", "hil_fixture", "injected fault: bad jump");
+    void (*bad)(void) = (void (*)(void))0xF0000001; /* thumb bit set */
+    bad();
 }
 
 /* ── Down-channel command interface ───────────────────────────────

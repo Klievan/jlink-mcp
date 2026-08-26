@@ -215,12 +215,19 @@ describe("S6 — RTT logging and the down channel", { skip }, () => {
     assert.ok(/seq=\d+/.test(out),
       `RTT produced nothing after a reset — the server was probably evicted: ${JSON.stringify(out.slice(0, 200))}`);
 
-    // And the reset must actually have reset: the fixture's sequence counter
-    // restarts from zero, so a stream that simply carried on counting means
-    // the target was never reset at all.
-    const seqs = [...out.matchAll(/seq=(\d+)/g)].map((m) => Number(m[1]));
-    assert.ok(seqs.some((n) => n < 5),
-      `sequence never restarted (saw ${seqs[0]}..${seqs[seqs.length - 1]}) — the target did not reset`);
+    // And the reset must actually have reset. Checked directly rather than
+    // through the log: halt after a reset and the PC must be at the reset
+    // handler. Watching the sequence counter conflates "did not reset" with
+    // "reset but the stream we read predates it", which is what made the
+    // previous version of this check ambiguous.
+    await hil.expectOk("reset", { halt: true });
+    const regs = await withTargetHalted(hil, () => hil.expectOk("read_registers"));
+    record("hil-reset-halt-registers.txt", regs);
+    const pc = reg(regs, "PC");
+    assert.ok(pc !== null && pc >= sym("Reset_Handler") && pc <= sym("Reset_Handler") + 0x20,
+      `after reset(halt) PC is 0x${pc?.toString(16)}, not the reset handler at ` +
+      `0x${sym("Reset_Handler").toString(16)} — reset is not resetting the core`);
+    await hil.expectOk("resume");
 
     // And the server should still be up to have served it.
     assert.match(await hil.expectOk("gdb_server_status"), /"running": true/);
