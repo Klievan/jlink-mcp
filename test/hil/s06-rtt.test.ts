@@ -1,7 +1,7 @@
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
 import {
-  HilClient, ON_HIL_RUNNER, record, RTT_FIXTURE_HEX, sym, word32, hex, reg,
+  HilClient, ON_HIL_RUNNER, record, RTT_FIXTURE_HEX, sym, word32, hex, reg, withTargetHalted,
 } from "./harness/mcp-client";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -55,9 +55,11 @@ describe("S6 — RTT logging and the down channel", { skip }, () => {
     //
     // Deliberately assertion-light — it fails only on the one thing that
     // makes every other test in this suite meaningless.
-    const regs = await hil.expectOk("read_registers");
-    const pc = reg(regs, "PC");
-    const parts: string[] = [`PC=0x${pc?.toString(16)}`];
+    const parts: string[] = [];
+    await withTargetHalted(hil, async () => {
+      const regs = await hil.expectOk("read_registers");
+      parts.push(`PC=0x${reg(regs, "PC")?.toString(16)}`);
+    });
 
     for (const [name, sym_] of [["Reset_Handler", "Reset_Handler"], ["main", "main"],
                                 ["Fault_Handler", "Fault_Handler"], ["_SEGGER_RTT", "_SEGGER_RTT"]] as const) {
@@ -67,30 +69,32 @@ describe("S6 — RTT logging and the down channel", { skip }, () => {
     // Is the SEGGER ID actually in RAM? If rtt_init ran, the first 16 bytes
     // of the control block spell "SEGGER RTT". If they are zero the firmware
     // never got there; if they are garbage it is not running our image.
-    const cb = await hil.expectOk("read_memory", { address: hex(sym("_SEGGER_RTT")), length: 48 });
-    record("hil-rtt-controlblock.txt", cb);
-    parts.push(`control block:\n${cb}`);
+    let cb = "";
+    await withTargetHalted(hil, async () => {
+      cb = await hil.expectOk("read_memory", { address: hex(sym("_SEGGER_RTT")), length: 48 });
+      record("hil-rtt-controlblock.txt", cb);
+      parts.push(`control block:\n${cb}`);
 
-    // What debug hardware is armed? A comparator matching an address this
-    // firmware executes produces a SIGTRAP that looks exactly like a hang.
-    const fpb = await hil.expectOk("read_memory", { address: "0xe0002000", length: 48 });
-    const dwt = await hil.expectOk("read_memory", { address: "0xe0001000", length: 96 });
-    const demcr = await hil.expectOk("read_memory", { address: "0xe000edfc", length: 4 });
-    record("hil-debug-hardware.txt", [`FPB (FP_CTRL, FP_REMAP, FP_COMP0..):\n${fpb}`,
-                                      `DWT:\n${dwt}`, `DEMCR:\n${demcr}`].join("\n\n"));
-    parts.push(`FP_CTRL+comparators:\n${fpb}`, `DEMCR:\n${demcr}`);
+      // What debug hardware is armed? A comparator matching an address this
+      // firmware executes produces a SIGTRAP that looks exactly like a hang.
+      const fpb = await hil.expectOk("read_memory", { address: "0xe0002000", length: 48 });
+      const dwt = await hil.expectOk("read_memory", { address: "0xe0001000", length: 96 });
+      const demcr = await hil.expectOk("read_memory", { address: "0xe000edfc", length: 4 });
+      record("hil-debug-hardware.txt", [`FPB (FP_CTRL, FP_REMAP, FP_COMP0..):\n${fpb}`,
+                                        `DWT:\n${dwt}`, `DEMCR:\n${demcr}`].join("\n\n"));
+      parts.push(`FP_CTRL+comparators:\n${fpb}`, `DEMCR:\n${demcr}`);
+    });
 
     // Does the counter move across a genuine run window?
-    await hil.expectOk("halt");
-    const c1 = word32(await hil.expectOk("read_memory", { address: hex(sym("test_counter")), length: 4 }));
-    const s1 = word32(await hil.expectOk("read_memory", { address: hex(sym("test_seq")), length: 4 }));
-    await hil.expectOk("resume");
+    const sample = () => withTargetHalted(hil, async () => ({
+      counter: word32(await hil.expectOk("read_memory", { address: hex(sym("test_counter")), length: 4 })),
+      seq: word32(await hil.expectOk("read_memory", { address: hex(sym("test_seq")), length: 4 })),
+    }));
+    const before = await sample();
     await sleep(500);
-    await hil.expectOk("halt");
-    const c2 = word32(await hil.expectOk("read_memory", { address: hex(sym("test_counter")), length: 4 }));
-    const s2 = word32(await hil.expectOk("read_memory", { address: hex(sym("test_seq")), length: 4 }));
-    await hil.expectOk("resume");
-    parts.push(`test_counter: ${c1} -> ${c2}`, `test_seq: ${s1} -> ${s2}`);
+    const after = await sample();
+    parts.push(`test_counter: ${before.counter} -> ${after.counter}`,
+               `test_seq: ${before.seq} -> ${after.seq}`);
 
     const report = parts.join("\n");
     record("hil-rtt-diagnostic.txt", report);
@@ -169,13 +173,11 @@ describe("S6 — RTT logging and the down channel", { skip }, () => {
     // Sample either side of a run window. Memory cannot be read while a
     // synchronous remote is executing, so halting to read is not an
     // observation error — it is the only way to observe at all.
-    await hil.expectOk("halt");
-    const a = word32(await hil.expectOk("read_memory", { address: hex(sym("test_counter")), length: 4 }));
-    await hil.expectOk("resume");
+    const read = () => withTargetHalted(hil, () =>
+      hil.expectOk("read_memory", { address: hex(sym("test_counter")), length: 4 }));
+    const a = word32(await read());
     await sleep(400);
-    await hil.expectOk("halt");
-    const b = word32(await hil.expectOk("read_memory", { address: hex(sym("test_counter")), length: 4 }));
-    await hil.expectOk("resume");
+    const b = word32(await read());
 
     assert.notEqual(a, null, "could not read the counter");
     assert.notEqual(a, b, "counter frozen — RTT polling should not stall the target");

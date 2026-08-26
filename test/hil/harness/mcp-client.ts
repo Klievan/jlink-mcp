@@ -126,6 +126,23 @@ export class HilClient {
     const content = (res.content ?? []) as Array<{ type: string; text?: string }>;
     const text = content.filter((c) => c.type === "text").map((c) => c.text ?? "").join("\n");
     if (res.isError) throw new Error(`${name} failed: ${text}`);
+
+    // Reading a running target is not a slow path, it is an impossible one:
+    // a synchronous remote leaves GDB inside its resume loop, so the server
+    // refuses. The refusal is correct — but a test that ignores it gets a
+    // null value and draws a conclusion from it. That has happened three
+    // times in this suite (S2b's resume check, S6's counter check, and the
+    // diagnostic written to stop the guessing), each time reading as "the
+    // counter is frozen" rather than "you asked at the wrong moment".
+    //
+    // Remembering the rule has not worked, so it is enforced here. Use
+    // withTargetHalted() to bracket reads.
+    if (/Target is running; GDB cannot accept commands/i.test(text)) {
+      throw new Error(
+        `${name} was called while the target was running — wrap it in withTargetHalted(). ` +
+        `Response: ${text}`
+      );
+    }
     return text;
   }
 
@@ -232,6 +249,26 @@ export async function ensureFixtureRunning(
     return `recovered by power cycle (PC was 0x${pc?.toString(16)})`;
   }
   return `RECOVERY FAILED: PC 0x${pc?.toString(16)} then 0x${pc2?.toString(16)}. ${recovery}`;
+}
+
+/**
+ * Halt the target, run `fn`, then resume it.
+ *
+ * The J-Link GDB Server is a synchronous remote: while the target executes,
+ * GDB sits in its resume loop and memory and registers cannot be read at all.
+ * So observing a running target means stopping it — that is not a measurement
+ * error to be avoided, it is the only way to measure.
+ *
+ * Resumes even when `fn` throws, so a failing assertion leaves the target in
+ * the state the next test expects rather than halted.
+ */
+export async function withTargetHalted<T>(hil: HilClient, fn: () => Promise<T>): Promise<T> {
+  await hil.call("halt");
+  try {
+    return await fn();
+  } finally {
+    await hil.call("resume");
+  }
 }
 
 /** True when running against real hardware. Suites skip themselves otherwise. */

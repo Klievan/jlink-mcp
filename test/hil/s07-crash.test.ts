@@ -1,7 +1,7 @@
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
 import {
-  HilClient, ON_HIL_RUNNER, record, RTT_FIXTURE_HEX, sym, reg, hex,
+  HilClient, ON_HIL_RUNNER, record, RTT_FIXTURE_HEX, sym, reg, hex, withTargetHalted,
 } from "./harness/mcp-client";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -121,7 +121,7 @@ describe("S7 — crash injection and diagnosis", { skip }, () => {
 
   test("the target recovers for the next test", async () => {
     await bootFixture();
-    const regs = await hil.expectOk("read_registers");
+    const regs = await withTargetHalted(hil, () => hil.expectOk("read_registers"));
     const pc = reg(regs, "PC")!;
     assert.ok(pc < sym("Fault_Handler") || pc > sym("Fault_Handler") + 4,
       "still parked in the fault trap after a reflash and reset");
