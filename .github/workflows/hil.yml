@@ -1,0 +1,75 @@
+name: HIL
+
+# Hardware-in-the-loop suite. Runs against a real nRF52840-DK on the
+# self-hosted runner. Not on every push — there is exactly one probe, and a
+# hardware run is minutes not seconds.
+on:
+  workflow_dispatch:
+    inputs:
+      record:
+        description: "Capture raw tool output as golden transcripts"
+        type: boolean
+        default: false
+  pull_request:
+    types: [labeled]
+  schedule:
+    - cron: "0 3 * * *"
+
+# One probe. Runs must queue, never race — cancelling mid-run would leave the
+# target halted or the GDB server orphaned for the next job to trip over.
+concurrency:
+  group: hil-hardware
+  cancel-in-progress: false
+
+jobs:
+  hil:
+    # Skip label-triggered runs unless the label is actually 'hil'.
+    if: github.event_name != 'pull_request' || github.event.label.name == 'hil'
+    runs-on: [self-hosted, linux, x64, hil, nrf52840dk]
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Recover probe to a known state
+        # Pre-run, always: the previous job may have left the target halted,
+        # a GDB server orphaned, or the probe wedged. --check-target also
+        # verifies SWD actually answers before we bother building.
+        run: sudo -n /usr/local/bin/hil-recover --check-target
+
+      - name: Environment report
+        # Cheap, and the first thing worth reading when a run fails oddly.
+        run: |
+          echo "node $(node --version)"
+          echo "gdb: $(arm-none-eabi-gdb --version | head -1)"
+          ls -l /opt/SEGGER/JLink/JLinkExe
+          lsusb | grep -i 1366 || echo "WARNING: no SEGGER device on the bus"
+
+      - run: npm ci
+      - run: npm run compile
+
+      - name: Unit tier
+        # If the parsers are broken, the hardware results are unreadable
+        # anyway. Fail here rather than midway through a hardware run.
+        run: npm test
+
+      - name: HIL suite
+        env:
+          HIL: "1"
+          HIL_RECORD: ${{ inputs.record && '1' || '0' }}
+          JLINK_DEVICE: NRF52840_XXAA
+        run: npm run test:hil
+
+      - name: Captured transcripts
+        if: always() && inputs.record
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-captures
+          path: test/golden/captured/
+          if-no-files-found: warn
+
+      - name: Recover probe after the run
+        # always(): a failed run is exactly when the probe most needs
+        # resetting, and leaving it wedged breaks the *next* job too.
+        if: always()
+        run: sudo -n /usr/local/bin/hil-recover --power-cycle || true
