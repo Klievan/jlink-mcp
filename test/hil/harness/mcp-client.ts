@@ -148,6 +148,13 @@ export class HilClient {
         `Response: ${text}`
       );
     }
+    // A tool that reports its own failure in the reply text is still a
+    // failure. `reset` returning "Reset failed: ..." sailed straight through
+    // here, and the test carried on to assert on a PC the reset had already
+    // said it could not vouch for — so the run blamed the wrong thing.
+    const reported = text.match(/^\s*(\w[\w ]*?(?:failed|Error)):\s*(.+)/im);
+    if (reported) throw new Error(`${name} reported failure: ${reported[0].trim()}`);
+
     return text;
   }
 

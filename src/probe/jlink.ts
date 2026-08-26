@@ -458,14 +458,17 @@ export class JLinkBackend extends ProbeBackend {
       errorCode: ProbeErrorCode.TARGET_UNREACHABLE,
       error:
         `Reset reported success but the core is at 0x${pc.toString(16)}, not the reset vector ` +
-        `0x${entry.toString(16)} (from VTOR 0x${vtor.toString(16)}). The reset did not take effect — ` +
-        `J-Link's default Cortex-M reset halts at the vector, so a PC elsewhere means the reset ` +
-        `never reached the target.`,
-      suggestedAction:
-        "Most often another process owns the probe (a GDB server or a second JLinkExe), so the " +
-        "reset command was accepted and discarded. Check for other J-Link processes, then retry. " +
-        "If the target needs a different reset strategy, pass one — see " +
-        "https://kb.segger.com/J-Link_Reset_Strategies",
+        `0x${entry.toString(16)} (from VTOR 0x${vtor.toString(16)}).`,
+      suggestedAction: this.rttConnected
+        ? "RTT is connected, and that is the likely explanation rather than the reset failing. " +
+          "J-Link collects RTT in stop mode by default (SetAllowStopMode is enabled): it halts " +
+          "the core, reads the buffer, and starts it again. A core cannot be held at the reset " +
+          "vector while that is running. Disconnect RTT first if you need the target to stay " +
+          "put. See https://kb.segger.com/J-Link_Command_Strings"
+        : "Most often another process owns the probe (a GDB server or a second JLinkExe), so the " +
+          "reset command was accepted and discarded. Check for other J-Link processes, then " +
+          "retry. If the target needs a different reset strategy, pass one — see " +
+          "https://kb.segger.com/J-Link_Reset_Strategies",
     };
   }
   async step(): Promise<CommandResult> {

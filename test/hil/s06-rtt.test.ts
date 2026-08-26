@@ -254,6 +254,21 @@ describe("S6 — RTT logging and the down channel", { skip }, () => {
     // handler. Watching the sequence counter conflates "did not reset" with
     // "reset but the stream we read predates it", which is what made the
     // previous version of this check ambiguous.
+    // Disconnect RTT before asking the core to stay put.
+    //
+    // J-Link collects RTT in stop mode by default (SetAllowStopMode is
+    // enabled): it halts the core, reads the buffer, and starts it again.
+    // Measured here — after `monitor reset` the server logged "Starting target
+    // CPU..." with no resume of ours in between, and the PC was off in main by
+    // the time we read it, differing between the GDB and JLinkExe channels
+    // because the core was moving between the two reads.
+    //
+    // So "halted at the reset vector" and "RTT is being collected" are not
+    // simultaneously satisfiable, and asserting both was asserting a
+    // contradiction. That is a fact about the probe, not a bug in the server.
+    //
+    //   https://kb.segger.com/J-Link_Command_Strings
+    await hil.expectOk("rtt_disconnect");
     await hil.expectOk("reset", { halt: true });
     const regs = await withTargetHalted(hil, () => hil.expectOk("read_registers"));
     record("hil-reset-halt-registers.txt", regs);
@@ -274,6 +289,7 @@ describe("S6 — RTT logging and the down channel", { skip }, () => {
       `moment — if that IS the reset handler, the core reset fine and GDB served a stale ` +
       `register cache; if it agrees, the reset genuinely did not take.`);
     await hil.expectOk("resume");
+    await hil.expectOk("rtt_connect");
 
     // And the server should still be up to have served it.
     assert.match(await hil.expectOk("gdb_server_status"), /"running": true/);
