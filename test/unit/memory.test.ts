@@ -185,12 +185,28 @@ describe("disarmDebugState", () => {
     }
   }
 
-  test("zeroes every FPB comparator", async () => {
+  test("zeroes every FPB comparator, including the literal ones", async () => {
+    // Cortex-M4's FPB has up to six code comparators plus two literal ones in
+    // a contiguous register file. Stopping at six leaves the last two armed.
     const b = new Recorder();
     await b.disarmDebugState();
-    for (const addr of [0xe0002008, 0xe000200c, 0xe0002010, 0xe0002014, 0xe0002018, 0xe000201c]) {
+    for (let i = 0; i < 8; i++) {
+      const addr = 0xe0002008 + i * 4;
       const w = b.writes.find(([a]) => a === addr);
-      assert.ok(w, `FP_COMP at 0x${addr.toString(16)} was not cleared`);
+      assert.ok(w, `FP_COMP${i} at 0x${addr.toString(16)} was not cleared`);
+      assert.equal(w![1], 0);
+    }
+  });
+
+  test("zeroes the DWT comparators too", async () => {
+    // A DWT watchpoint traps exactly like a breakpoint and survives a reset
+    // exactly as durably. Clearing only the FPB leaves half the problem.
+    const b = new Recorder();
+    await b.disarmDebugState();
+    for (let i = 0; i < 4; i++) {
+      const addr = 0xe0001028 + i * 0x10;
+      const w = b.writes.find(([a]) => a === addr);
+      assert.ok(w, `DWT_FUNCTION${i} at 0x${addr.toString(16)} was not cleared`);
       assert.equal(w![1], 0);
     }
   });

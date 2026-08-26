@@ -475,11 +475,19 @@ export abstract class ProbeBackend {
    * prevent the caller from disconnecting.
    */
   async disarmDebugState(): Promise<{ ok: boolean; detail: string }> {
-    // FP_COMP0..5. Six is the nRF52840's complement; writing past the
-    // implemented set is harmless and keeps this generic across Cortex-M.
-    const comparators = [0xe0002008, 0xe000200c, 0xe0002010, 0xe0002014, 0xe0002018, 0xe000201c];
+    // FP_COMP0..7. Cortex-M4's FPB has up to six code comparators plus two
+    // literal ones, and the register file is contiguous — stopping at six
+    // leaves the last two armed. Writing past the implemented set is harmless.
+    const fpComparators = Array.from({ length: 8 }, (_, i) => 0xe0002008 + i * 4);
+
+    // DWT_FUNCTION0..3 at 0xE0001028 + 0x10*n. A DWT watchpoint traps exactly
+    // like a breakpoint and survives a reset exactly as durably, so clearing
+    // only the FPB leaves half the problem in place.
+    const dwtFunctions = Array.from({ length: 4 }, (_, i) => 0xe0001028 + i * 0x10);
+
     const writes: [number, number, string][] = [
-      ...comparators.map((a, i) => [a, 0x00000000, `FP_COMP${i}`] as [number, number, string]),
+      ...fpComparators.map((a, i) => [a, 0x00000000, `FP_COMP${i}`] as [number, number, string]),
+      ...dwtFunctions.map((a, i) => [a, 0x00000000, `DWT_FUNCTION${i}`] as [number, number, string]),
       // KEY=1, ENABLE=0. The key bit is required for any write to take.
       [0xe0002000, 0x00000002, "FP_CTRL"],
       // Clears every vector-catch enable, which can trap just as durably.
