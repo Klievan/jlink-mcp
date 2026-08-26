@@ -48,6 +48,18 @@ describe("GDB routing — command mapping", () => {
     assert.deepEqual(bridge.sent, ["info all-registers"]);
   });
 
+  test("setBreakpoint uses a GDB breakpoint, not SetBP", async () => {
+    // Via JLinkExe this would evict the GDB session AND lose the breakpoint
+    // when the transient process exits — the caller pays twice.
+    await backend.setBreakpoint(0x44);
+    assert.deepEqual(bridge.sent, ["break *0x44"]);
+  });
+
+  test("clearBreakpoints deletes GDB breakpoints", async () => {
+    await backend.clearBreakpoints();
+    assert.deepEqual(bridge.sent, ["delete breakpoints"]);
+  });
+
   test("writeMemory writes a 32-bit word", async () => {
     await backend.writeMemory(0x20000000, 0xdeadbeef);
     assert.deepEqual(bridge.sent, ["set {unsigned int}0x20000000 = 0xdeadbeef"]);

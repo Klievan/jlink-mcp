@@ -430,10 +430,24 @@ export class JLinkBackend extends ProbeBackend {
     return this.withPreflight("erase", () => this.execRaw(["erase"]));
   }
 
+  /**
+   * Breakpoints during a GDB session must go through GDB.
+   *
+   * The JLinkExe path is doubly wrong once a session is live. It evicts the
+   * GDB server (one client per probe), and the breakpoint it sets dies with
+   * the transient JLinkExe process anyway — so the caller loses their session
+   * and does not even get a breakpoint for it. GDB's own breakpoints persist
+   * for the life of the session and are what `resume`/`gdb_wait` will actually
+   * stop on.
+   */
   async setBreakpoint(address: number): Promise<CommandResult> {
+    if (this.useGdb()) return this.runViaGdb(`break *0x${address.toString(16)}`, 5000);
     return this.withPreflight("setBreakpoint", () => this.execRaw([`SetBP 0x${address.toString(16)}`]));
   }
   async clearBreakpoints(): Promise<CommandResult> {
+    // `delete` with no argument deletes every breakpoint and, unlike the
+    // interactive form, does not prompt for confirmation in MI.
+    if (this.useGdb()) return this.runViaGdb("delete breakpoints", 5000);
     return this.withPreflight("clearBreakpoints", () => this.execRaw(["ClrBP"]));
   }
 
