@@ -133,16 +133,16 @@ export class JLinkMcpServer {
         // block by scanning RAM when RTT connects, and firmware that sets that
         // block up at boot must have reached that point first. Connect too
         // early and the scan finds nothing and is never retried.
-        const resumed = await probe.resume();
-        steps.push(resumed.success
-          ? "Target: resumed (the GDB server halts the core when it attaches)"
-          : `Target: could not resume - ${JLinkMcpServer.resultText(resumed, "unknown error")}`);
-        await sleep(500);
+        // Resume happens inside connectRttToRunningTarget below, which owns
+        // the ordering both this tool and the flash restore path need.
 
         if (probe.supportsRTT() && !this.rttClient.isConnected()) {
           try {
             this.rttClient.clearBuffer(); // Clear stale buffers from previous sessions
-            await this.rttClient.connect();
+            const { resumed: didResume } = await this.connectRttToRunningTarget();
+            steps.push(didResume
+              ? "Target: resumed (the GDB server halts the core when it attaches)"
+              : "Target: could not resume — RTT may stay silent");
             probe.rttConnected = true;
             steps.push(`RTT: connected (port ${probe.getRTTPort()})`);
             await sleep(1500);
@@ -825,8 +825,13 @@ export class JLinkMcpServer {
       else failed.push(`GDB client (${r.error || r.output})`);
     }
     if (hadRtt && !failed.length) {
-      try { await this.rttClient.connect(); probe.rttConnected = true; restored.push("RTT"); }
-      catch (e: any) { failed.push(`RTT (${e?.message ?? e})`); }
+      // Resume before reconnecting. The server just halted the core on attach,
+      // and RTT connected to a halted target finds no control block and stays
+      // silent — which after a flash reads as "flashing broke RTT".
+      try {
+        const { note } = await this.connectRttToRunningTarget();
+        restored.push(`RTT${note}`);
+      } catch (e: any) { failed.push(`RTT (${e?.message ?? e})`); }
     }
 
     if (restored.length) notes.push(`Restored: ${restored.join(", ")}.`);
@@ -863,6 +868,37 @@ export class JLinkMcpServer {
       // Best-effort. If it fails the caller still gets the JLinkExe path,
       // which is the behaviour they had before.
     }
+  }
+
+  /**
+   * Connect RTT to a target that is actually executing.
+   *
+   * Two things have to be true before RTT produces anything, and both are
+   * easy to get wrong independently:
+   *
+   *  - The core must be running. The GDB server halts it on attach and holds
+   *    it, so anything that brings the server up has stopped the firmware.
+   *  - The firmware must have reached the point where it builds its RTT
+   *    control block. The probe finds that block by scanning RAM when RTT
+   *    connects, and does not retry — connect too early and RTT is silent
+   *    forever, with no error anywhere.
+   *
+   * The failure is silent in both directions: the up channel produces nothing
+   * and the down channel swallows commands, so it reads as "RTT is broken"
+   * rather than "the target was not running yet". This has now been fixed
+   * twice in two different call sites; it lives in one place so there is not
+   * a third.
+   */
+  private async connectRttToRunningTarget(): Promise<{ resumed: boolean; note: string }> {
+    const resumed = await this.probe.resume();
+    // Give the firmware time to reach its RTT init before the scan happens.
+    await sleep(500);
+    await this.rttClient.connect();
+    this.probe.rttConnected = true;
+    return {
+      resumed: resumed.success,
+      note: resumed.success ? "" : " (warning: could not resume the target, so RTT may stay silent)",
+    };
   }
 
   private registerResources(): void {

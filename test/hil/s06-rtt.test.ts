@@ -212,8 +212,15 @@ describe("S6 — RTT logging and the down channel", { skip }, () => {
 
     const out = await hil.expectOk("rtt_read", { count: 50 });
     record("hil-rtt-after-reset.txt", out);
-    assert.match(out, /fixture ready/,
+    assert.ok(/seq=\d+/.test(out),
       `RTT produced nothing after a reset — the server was probably evicted: ${JSON.stringify(out.slice(0, 200))}`);
+
+    // And the reset must actually have reset: the fixture's sequence counter
+    // restarts from zero, so a stream that simply carried on counting means
+    // the target was never reset at all.
+    const seqs = [...out.matchAll(/seq=(\d+)/g)].map((m) => Number(m[1]));
+    assert.ok(seqs.some((n) => n < 5),
+      `sequence never restarted (saw ${seqs[0]}..${seqs[seqs.length - 1]}) — the target did not reset`);
 
     // And the server should still be up to have served it.
     assert.match(await hil.expectOk("gdb_server_status"), /"running": true/);
