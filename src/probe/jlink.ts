@@ -329,16 +329,41 @@ export class JLinkBackend extends ProbeBackend {
   }
   async reset(halt = false): Promise<CommandResult> {
     if (this.useGdb()) {
-      // `monitor reset` on J-Link halts by default; add an explicit
-      // `monitor go` to resume when the caller asked for run-after-reset.
-      //
-      // These MUST be two separate `command()` calls. GDBClient writes the
-      // string straight to stdin and resolves on the first `^done`/`(gdb)`,
-      // so a "cmd\ncmd" string leaves the second response orphaned in the
-      // shared output buffer, where it can satisfy the *next* command's
-      // completion check and desync every reply after it.
+      // Note on sequencing: each of these MUST be a separate `command()`
+      // call. GDBClient writes the string straight to stdin and resolves on
+      // the first result record, so a "cmd\ncmd" string leaves the second
+      // response orphaned in the shared buffer, where it can satisfy the
+      // *next* command's completion check and desync every reply after it.
+
+      if (halt) {
+        // `monitor reset` alone does not leave the core stopped at the reset
+        // vector. Measured on an nRF52840: after reset(halt) the CPU was
+        // running in main, and both GDB and JLinkExe agreed on the address —
+        // so this was the core genuinely running, not a stale register cache.
+        //
+        // Halting after the fact does not help either: by the time the halt
+        // lands the core has executed an arbitrary amount of startup, so the
+        // PC is wherever it happened to reach. To stop *at* the reset vector
+        // the core has to be told before it starts, which is what vector
+        // catch is for — DEMCR.VC_CORERESET (bit 0) halts the CPU on reset.
+        //
+        // Set it, reset, then clear it, so the target is not left with a
+        // debug trap armed for whoever runs next. Leaving debug state behind
+        // is its own long-running bug in this project's history.
+        const demcr = 0xe000edfc;
+        const before = await this.runViaGdb(`x/1wx 0x${demcr.toString(16)}`, 5000);
+        const prior = before.output.match(/0x([0-9a-fA-F]{1,8})\s*$/m)?.[1];
+        const priorValue = prior ? parseInt(prior, 16) : 0x01000000; // TRCENA
+
+        await this.runViaGdb(`set {unsigned int}0x${demcr.toString(16)} = 0x${(priorValue | 1).toString(16)}`, 5000);
+        const reset = await this.runViaGdb("monitor reset", 5000);
+        // Restore the caller's DEMCR, minus the catch we added.
+        await this.runViaGdb(`set {unsigned int}0x${demcr.toString(16)} = 0x${(priorValue & ~1).toString(16)}`, 5000);
+        return reset;
+      }
+
       const reset = await this.runViaGdb("monitor reset", 5000);
-      if (halt || !reset.success) return reset;
+      if (!reset.success) return reset;
       const go = await this.runViaGdb("monitor go", 5000);
       return {
         success: go.success,
