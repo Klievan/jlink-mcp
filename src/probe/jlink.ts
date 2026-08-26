@@ -97,6 +97,15 @@ export class JLinkBackend extends ProbeBackend {
   /**
    * Raw JLinkExe execution. Does NOT include preflight/locking.
    * Use the public methods (which call withPreflight) instead.
+   *
+   * Notes on flags:
+   *  - `-ExitOnError 1` is intentionally NOT passed. J-Link Commander
+   *    treats the transient "Failed to initialize DAP" line emitted before
+   *    a successful `connect under reset` fallback as an error, causing
+   *    the interpreter to bail before running the user's script. That
+   *    breaks any target where the first attach attempt is unreliable
+   *    (e.g. STM32L0 at 4 MHz SWD, MCU running from MSI). We classify
+   *    real failures below by parsing stdout instead.
    */
   private async execRaw(commands: string[], speedOverride?: number): Promise<CommandResult> {
     const speed = speedOverride ?? this.config.speed;
@@ -105,7 +114,6 @@ export class JLinkBackend extends ProbeBackend {
       "-if", this.config.interface,
       "-speed", String(speed),
       "-autoconnect", "1",
-      "-ExitOnError", "1",
       "-NoGui", "1",
     ];
     if (this.config.serialNumber) {
@@ -132,17 +140,22 @@ export class JLinkBackend extends ProbeBackend {
       proc.on("exit", (code) => {
         if (code !== 0) logError(`J-Link exited with code ${code}`);
         const result: CommandResult = { success: code === 0, rawOutput: stdout, output: stripBoilerplate(stdout), error: stderr || undefined };
-        // Classify errors from output
-        if (!result.success) {
-          const raw = stdout.toLowerCase();
-          if (raw.includes("inittarget() returned error") || raw.includes("could not connect") || raw.includes("cannot connect")) {
-            result.errorCode = ProbeErrorCode.TARGET_UNREACHABLE;
-            result.lastSuccessfulStage = "probe_connected";
-            result.suggestedAction = "Target attach failed. Try: reset with halt, reduce speed, or power cycle.";
-          } else if (raw.includes("failed to open dll") || raw.includes("no j-link") || raw.includes("no emulators found")) {
-            result.errorCode = ProbeErrorCode.PROBE_NOT_FOUND;
-            result.suggestedAction = "No J-Link probe found. Check USB connection.";
-          }
+        // Classify failures from stdout. Since -ExitOnError is no longer
+        // set, JLinkExe may exit 0 even when the target could not be
+        // reached (it drops to the interactive prompt and quietly runs
+        // `exit`), so we must also flip `success` when we detect a
+        // structural failure — otherwise recovery logic that keys off
+        // `result.success` would incorrectly treat this as fine.
+        const raw = stdout.toLowerCase();
+        if (raw.includes("inittarget() returned error") || raw.includes("could not connect") || raw.includes("cannot connect")) {
+          result.success = false;
+          result.errorCode = ProbeErrorCode.TARGET_UNREACHABLE;
+          result.lastSuccessfulStage = "probe_connected";
+          result.suggestedAction = "Target attach failed. Try: reset with halt, reduce speed, or power cycle.";
+        } else if (raw.includes("failed to open dll") || raw.includes("no j-link") || raw.includes("no emulators found")) {
+          result.success = false;
+          result.errorCode = ProbeErrorCode.PROBE_NOT_FOUND;
+          result.suggestedAction = "No J-Link probe found. Check USB connection.";
         }
         resolve(result);
       });
@@ -406,7 +419,14 @@ export class JLinkBackend extends ProbeBackend {
       "-port", String(this.config.gdbPort),
       "-RTTTelnetPort", String(this.config.rttTelnetPort),
       "-SWOPort", String(this.config.swoTelnetPort),
-      "-vd", "-noir", "-LocalhostOnly", "1", "-singlerun", "-NoGui", "1",
+      // Note: `-singlerun` is intentionally NOT set. That flag makes
+      // JLinkGDBServer exit the moment the target is reset or the GDB
+      // client disconnects, which caused control-plane desync — the
+      // child GDB process would still think it was connected while the
+      // remote socket was dead, producing "monitor command not supported"
+      // and "program has no registers now" errors. We manage server
+      // lifetime explicitly via `stopGDBServer()` / `dispose()`.
+      "-vd", "-noir", "-LocalhostOnly", "1", "-NoGui", "1",
     ];
     if (this.config.serialNumber) args.push("-select", `USB=${this.config.serialNumber}`);
 

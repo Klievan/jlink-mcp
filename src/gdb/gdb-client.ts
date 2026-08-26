@@ -38,7 +38,36 @@ export class GDBClient {
   }
 
   /**
+   * Patterns in GDB output that indicate the remote target has gone away
+   * even though the child GDB process is still alive. When we see one of
+   * these in a command response, we invalidate `connected` so the next
+   * call takes the auto-reconnect path.
+   *
+   * Keep these narrow — a fuzzy match here causes false positives on
+   * informational output and produces spurious reconnects.
+   */
+  private static readonly REMOTE_LOSS_PATTERNS: RegExp[] = [
+    /Remote connection closed/i,
+    /Remote (failure|communication) reply/i,
+    /Remote communication error/i,
+    /Remote replied unexpectedly/i,
+    /monitor command not supported by this target/i,
+    /program has no registers now/i,
+    /No target selected/i,
+    /Cannot execute this command (while|without) the (target|selected thread)/i,
+  ];
+
+  /**
    * Start GDB and connect to a remote target (GDB server).
+   *
+   * Fast-path: if the child GDB process is up and we haven't observed
+   * remote-loss on a previous command, treat the session as live. We do
+   * NOT actively ping — a probe here would compete with in-flight
+   * asynchronous MI events (stop notifications, register updates) and
+   * could time out on a perfectly healthy session, causing a needless
+   * teardown. If the session is actually stale, the next real command's
+   * response will match one of REMOTE_LOSS_PATTERNS and trigger the
+   * auto-reconnect path in `command()`.
    */
   async connect(host: string = "localhost", port: number = 2331, elfFile?: string): Promise<GDBResponse> {
     if (this.connected && this.proc) {
@@ -159,6 +188,15 @@ export class GDBClient {
     this.stopEvent = null;
     const rawOutput = await this.sendCommand(cmd, isRunCommand ? timeout : 10000);
     const output = this.cleanMI(rawOutput);
+
+    // Watch for signals that the remote died mid-session. GDB itself is
+    // still up (so `proc.on("exit")` didn't fire) but the socket to
+    // JLinkGDBServer is gone. Flip `connected` so the next call takes
+    // the auto-reconnect path instead of returning stale errors.
+    if (GDBClient.REMOTE_LOSS_PATTERNS.some((p) => p.test(rawOutput))) {
+      log(`[GDB] Remote loss detected in response to \`${cmd}\` — invalidating connection`);
+      this.connected = false;
+    }
 
     // For run commands, check if we got a stop event
     if (isRunCommand) {
