@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.5.1
+
+Marketplace metadata only — no code changes, and nothing to gain by upgrading
+if you already have 0.5.0.
+
+0.5.0 was published from a build made before the listing was updated, so it
+went out with the old name and keyword set. This carries them:
+
+- The listing is now named for what it does rather than for the package:
+  "J-Link MCP — Embedded Debugging for AI Agents". The identifier is unchanged.
+- Keywords cover the terms people actually search — `jlink` unhyphenated,
+  `gdb`, `swd`, `jtag`, `mcu`, the device families this is used against
+  (`nrf52`, `nordic`, `stm32`, `zephyr`), `svd` and `cmsis` for the peripheral
+  decoding added in 0.5.0, and `copilot`/`ai`/`llm`.
+- Added the `AI` category alongside `Debuggers`.
+- The npm tarball dropped from 2.2 MB to 332 kB: it was shipping the
+  marketplace icon and 2.2 MB of source maps pointing at a `src/` tree that is
+  not published.
+
 ## 0.5.0
 
 Another hardware round, and another set of operations that reported success
