@@ -1,6 +1,6 @@
 {
   "name": "jlink-mcp",
-  "displayName": "jlink-mcp",
+  "displayName": "J-Link MCP — Embedded Debugging for AI Agents",
   "description": "MCP server for SEGGER J-Link debug probes — LLM-driven embedded debugging with RTT, GDB server, and Trice/Pigweed support",
   "repository": {
     "type": "git",
