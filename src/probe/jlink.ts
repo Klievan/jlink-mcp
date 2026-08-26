@@ -440,6 +440,23 @@ export class JLinkBackend extends ProbeBackend {
   private async verifyResetHalt(reset: CommandResult): Promise<CommandResult> {
     if (!reset.success) return reset;
 
+    // Not verifiable while RTT is being collected, so do not try.
+    //
+    // J-Link collects RTT in stop mode by default (SetAllowStopMode): it
+    // halts the core, reads the buffer, and starts it again. Measured — after
+    // `monitor reset` the server logged "Starting target CPU..." with no
+    // resume of ours in between, and the PC read back from inside main,
+    // differing between the GDB and JLinkExe channels because the core was
+    // moving between the two reads. Closing our telnet client does not stop
+    // that; the collector is J-Link's, not ours.
+    //
+    // The reset itself is fine. Reporting failure here would be the same lie
+    // this function exists to catch, only pointed the other way — and it did
+    // exactly that for one round, failing a reset that had worked.
+    //
+    //   https://kb.segger.com/J-Link_Command_Strings
+    if (this.rttConnected) return reset;
+
     const vtor = await this.readWord32(0xe000ed08);
     if (vtor === null) return reset;
     const vector = await this.readWord32((vtor & 0xffffff80) + 4);
