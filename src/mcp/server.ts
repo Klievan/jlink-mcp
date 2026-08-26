@@ -1,11 +1,12 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { ProbeBackend } from "../probe/backend";
+import { ProbeBackend, parseLittleEndian32 } from "../probe/backend";
 import { createProbeBackend, ProbeFactoryConfig } from "../probe/factory";
 import { GDBClient } from "../gdb/gdb-client";
 import { RTTClient, ParsedLogLine } from "../rtt/rtt-client";
 import { TelnetProxy } from "../telnet/telnet-proxy";
+import { SvdRegistry, decodeValue, formatDecoded } from "../svd";
 import { ProcessManager } from "../utils/process-manager";
 import { log } from "../utils/logger";
 
@@ -16,8 +17,9 @@ export class JLinkMcpServer {
   private gdb: GDBClient;
   private rttClient: RTTClient;
   private telnetProxy: TelnetProxy;
+  private svd: SvdRegistry;
 
-  constructor(probeConfig?: ProbeFactoryConfig, rttPort?: number, telnetConfig?: { listenPort?: number; sourceHost?: string; sourcePort?: number }, gdbPath?: string) {
+  constructor(probeConfig?: ProbeFactoryConfig, rttPort?: number, telnetConfig?: { listenPort?: number; sourceHost?: string; sourcePort?: number }, gdbPath?: string, svdPath?: string) {
     this.processManager = new ProcessManager();
     this.probe = createProbeBackend(
       probeConfig || { type: "jlink" },
@@ -25,6 +27,7 @@ export class JLinkMcpServer {
     );
 
     this.gdb = new GDBClient(gdbPath || "arm-none-eabi-gdb");
+    this.svd = new SvdRegistry(svdPath);
     // Let the probe backend route CPU-control and read commands through
     // the GDB session when it's connected, instead of spawning a
     // competing probe-CLI process that would evict the GDB server.
@@ -447,6 +450,119 @@ export class JLinkMcpServer {
           const r = await probe.erase();
           return { success: r.success, text: r.success ? "Chip erased" : `Erase failed: ${JLinkMcpServer.resultText(r, "unknown error")}` };
         });
+        return { content: [{ type: "text", text }] };
+      }
+    );
+
+    // ═══════════════════════════════════════════════════════════════
+    // PERIPHERALS (CMSIS-SVD)
+    // ═══════════════════════════════════════════════════════════════
+
+    this.server.tool("list_peripherals",
+      "List the target's peripherals and base addresses, from its CMSIS-SVD description. Requires an SVD file to be configured.",
+      { filter: z.string().optional().describe("Case-insensitive substring, e.g. 'uart' or 'timer'") },
+      async ({ filter }) => {
+        const why = this.svd.unavailableReason();
+        if (why) return { content: [{ type: "text", text: why }] };
+        const list = this.svd.listPeripherals(filter);
+        if (list.length === 0) {
+          return { content: [{ type: "text", text: `No peripherals match ${JSON.stringify(filter)}.` }] };
+        }
+        const dev = this.svd.getDevice();
+        const lines = list.map((p) =>
+          `0x${p.baseAddress.toString(16).toUpperCase().padStart(8, "0")}  ${p.name.padEnd(16)} ${p.registers.length} registers` +
+          (p.description ? `  — ${p.description.replace(/\s+/g, " ").slice(0, 60)}` : ""));
+        return { content: [{ type: "text", text: `${dev?.name ?? "device"}: ${list.length} peripherals\n\n${lines.join("\n")}` }] };
+      }
+    );
+
+    this.server.tool("read_peripheral",
+      "Read every register of a peripheral from the target and decode each one's bit fields by name. This is read_memory plus the meaning of what was read.",
+      {
+        peripheral: z.string().describe("Peripheral name, e.g. 'FICR', 'UARTE0'"),
+        registers: z.array(z.string()).optional().describe("Only these registers (default: all readable ones)"),
+      },
+      async ({ peripheral, registers }) => {
+        const why = this.svd.unavailableReason();
+        if (why) return { content: [{ type: "text", text: why }] };
+        const g = this.requireDevice(); if (g) return g;
+        await this.ensureGdbSession();
+
+        const p = this.svd.findPeripheral(peripheral);
+        if (!p) {
+          const near = this.svd.listPeripherals(peripheral).slice(0, 8).map((x) => x.name);
+          return { content: [{ type: "text", text: `No peripheral named ${JSON.stringify(peripheral)}.` +
+            (near.length ? ` Did you mean: ${near.join(", ")}?` : " Use list_peripherals.") }] };
+        }
+
+        // Write-only registers (Nordic's TASKS_*) read as garbage and would be
+        // decoded into confident nonsense, so they are skipped rather than
+        // reported. Reading every register of a large peripheral is also slow;
+        // the `registers` argument exists for that.
+        let chosen = p.registers.filter((r) => !/^write-only$/i.test(r.access ?? ""));
+        if (registers?.length) {
+          const want = new Set(registers.map((r) => r.toLowerCase()));
+          chosen = chosen.filter((r) => want.has(r.name.toLowerCase()) || want.has(r.name.toLowerCase().split(".").pop()!));
+        }
+        if (chosen.length === 0) {
+          return { content: [{ type: "text", text: `No readable registers matched in ${p.name}.` }] };
+        }
+        const MAX = 48;
+        const truncated = chosen.length > MAX;
+        chosen = chosen.slice(0, MAX);
+
+        const out: string[] = [`${p.name} @ 0x${p.baseAddress.toString(16).toUpperCase().padStart(8, "0")}`];
+        for (const reg of chosen) {
+          const r = await probe.readMemory(reg.address, 4);
+          const dump = probe.parseMemoryDump(r.rawOutput);
+          const bytes = dump.flatMap((d) => d.hex.split(/\s+/)).filter(Boolean);
+          if (bytes.length < 4) {
+            out.push(`${reg.name}: could not read — ${JLinkMcpServer.resultText(r, "no data")}`);
+            continue;
+          }
+          const value = parseLittleEndian32(bytes, 0);
+          out.push(formatDecoded(reg, value, decodeValue(reg, value)));
+        }
+        if (truncated) out.push(`\n(showing first ${MAX} registers; pass \`registers\` to narrow)`);
+        return { content: [{ type: "text", text: out.join("\n") }] };
+      }
+    );
+
+    this.server.tool("decode_register",
+      "Decode a value into named bit fields using the target's SVD. Reads from the device unless a value is supplied — useful for interpreting a number you already have.",
+      {
+        peripheral: z.string().describe("Peripheral name, e.g. 'UARTE0'"),
+        register: z.string().describe("Register name, e.g. 'ENABLE' or 'INFO.PART'"),
+        value: z.string().optional().describe("Hex value to decode instead of reading the device"),
+      },
+      async ({ peripheral, register, value }) => {
+        const why = this.svd.unavailableReason();
+        if (why) return { content: [{ type: "text", text: why }] };
+
+        const reg = this.svd.findRegister(peripheral, register);
+        if (!reg) {
+          const near = this.svd.suggestRegisters(peripheral, register);
+          return { content: [{ type: "text", text: `${peripheral} has no register ${JSON.stringify(register)}.` +
+            (near.length ? ` Did you mean: ${near.join(", ")}?` : "") }] };
+        }
+
+        let v: number;
+        if (value !== undefined) {
+          const parsed = parseInt(value.replace(/^0x/i, ""), 16);
+          if (isNaN(parsed)) return { content: [{ type: "text", text: `Not a hex value: ${value}` }] };
+          v = parsed >>> 0;
+        } else {
+          const g = this.requireDevice(); if (g) return g;
+          await this.ensureGdbSession();
+          const r = await probe.readMemory(reg.address, 4);
+          const bytes = probe.parseMemoryDump(r.rawOutput).flatMap((d) => d.hex.split(/\s+/)).filter(Boolean);
+          if (bytes.length < 4) {
+            return { content: [{ type: "text", text: `Could not read ${reg.name}: ${JLinkMcpServer.resultText(r, "no data")}` }] };
+          }
+          v = parseLittleEndian32(bytes, 0);
+        }
+        const text = formatDecoded(reg, v, decodeValue(reg, v)) +
+          (reg.description ? `\n\n${reg.description.replace(/\s+/g, " ")}` : "");
         return { content: [{ type: "text", text }] };
       }
     );

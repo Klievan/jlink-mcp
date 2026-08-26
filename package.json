@@ -1,7 +1,7 @@
 {
   "name": "jlink-mcp",
   "displayName": "jlink-mcp",
-  "description": "MCP server for SEGGER J-Link debug probes — LLM-driven embedded debugging with RTT, GDB server, and Trice/Pigweed support",
+  "description": "MCP server for SEGGER J-Link debug probes \u2014 LLM-driven embedded debugging with RTT, GDB server, and Trice/Pigweed support",
   "repository": {
     "type": "git",
     "url": "https://github.com/Klievan/jlink-mcp"
@@ -214,6 +214,11 @@
           "type": "number",
           "default": 1,
           "description": "Target index reported by the probe's scan"
+        },
+        "jlinkMcp.svdPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to a CMSIS-SVD file for the target. Enables symbolic peripheral reads (list_peripherals, read_peripheral, decode_register). Vendors publish these; the same file Cortex-Debug uses as svdFile works here."
         }
       }
     },
@@ -242,10 +247,12 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "sax": "^1.6.1",
     "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/node": "^25.5.2",
+    "@types/sax": "^1.2.7",
     "@types/vscode": "^1.110.0",
     "@vscode/vsce": "^3.7.1",
     "esbuild": "^0.28.0",

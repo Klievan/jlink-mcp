@@ -92,6 +92,9 @@ export function activate(context: vscode.ExtensionContext) {
         // The GDB used for source-level debugging.
         put("GDB_PATH", cfg.get<string>("gdbPath"));
 
+        // CMSIS-SVD description, for symbolic peripheral reads.
+        put("SVD_PATH", cfg.get<string>("svdPath"));
+
         return [
           new vscode.McpStdioServerDefinition(
             "J-Link Debug Probe",
