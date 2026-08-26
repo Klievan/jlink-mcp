@@ -283,7 +283,14 @@ export class JLinkBackend extends ProbeBackend {
       "-port", String(this.config.gdbPort),
       "-RTTTelnetPort", String(this.config.rttTelnetPort),
       "-SWOPort", String(this.config.swoTelnetPort),
-      "-vd", "-noir", "-LocalhostOnly", "1", "-singlerun", "-NoGui", "1",
+      // Note: `-singlerun` is intentionally NOT set. That flag makes
+      // JLinkGDBServer exit the moment the target is reset or the GDB
+      // client disconnects, which caused control-plane desync — the
+      // child GDB process would still think it was connected while the
+      // remote socket was dead, producing "monitor command not supported"
+      // and "program has no registers now" errors. We manage server
+      // lifetime explicitly via `stopGDBServer()` / `dispose()`.
+      "-vd", "-noir", "-LocalhostOnly", "1", "-NoGui", "1",
     ];
     if (this.config.serialNumber) args.push("-select", `USB=${this.config.serialNumber}`);
 
