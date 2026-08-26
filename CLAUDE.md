@@ -13,13 +13,41 @@ npm run compile
 ## Testing
 
 ```bash
-npm test          # unit tier: replays test/golden/ transcripts through the parsers
+npm test          # unit tier: ~187 tests, seconds, no hardware
+npm run test:hil  # hardware tier: needs HIL=1 and a real probe; skips otherwise
 ```
 
-Fast tier only — no hardware. Assert on parsed *content*, not `success === true`;
-the parsers fail by silently returning nothing while the tool still reports
-success. See `test/README.md`. A hardware-in-the-loop tier (`test/hil/`) against
-an nRF52840-DK on a self-hosted runner is planned but not built.
+Two tiers, with a deliberate flow between them. The hardware tier captures raw
+probe output (`JLINK_MCP_LOG_RAW=1`); `test/golden/promote.js` extracts it into
+`test/golden/`; the unit tier replays those real transcripts. So a format
+regression is caught in seconds on any machine, and the slow hardware run only
+gates merges.
+
+**Assert on parsed content, never on `success === true`.** Every bug this
+project has shipped reported success while silently losing data —
+`diagnose_crash` saying "no faults detected" during real crashes, every
+GDB-routed tool returning empty output while the server reported itself
+healthy. A suite that checks the call did not error would have passed on all
+of them.
+
+**Do not derive tool behaviour by reasoning.** J-Link parses `mem`'s length as
+bare hex, `rreg` rejects the register names it prints as valid, GDB emits a
+prompt before any command is sent. Each of those cost a hardware round because
+it was reasoned about rather than checked. `reference_jlink_gdb_quirks` in
+memory lists the ones already paid for.
+
+**Reading a running target is impossible, not slow.** The J-Link GDB Server is
+a synchronous remote. Use `withTargetHalted()` in HIL tests — the harness
+throws if you forget, because remembering did not work three times running.
+
+Hardware runs on a self-hosted runner with an nRF52840-DK. Two fixtures:
+`fixture.hex` is hand-assembled with exact known instruction addresses (S1-S3
+assert against them); `rtt-fixture.hex` is compiled C with RTT, a command
+channel, symbols and fault injection (S6-S7). Rebuild the latter with
+`test/hil/fixture/build-rtt-fixture.sh` — CI never builds it, so a toolchain
+difference cannot change what the tests run against.
+
+See `test/README.md` and `test/golden/README.md`.
 
 ## VSCode Extension (native MCP integration)
 
