@@ -27,7 +27,7 @@ const skip = !ON_HIL_RUNNER && "requires HIL=1";
  * configuration where the halt/inspect/step contract actually holds.
  */
 describe("S2a — JLinkExe path: state does not persist between calls", { skip }, () => {
-  const hil = new HilClient();
+  const hil = new HilClient("s02a-jlinkexe");
   before(async () => {
     await hil.start();
     await hil.expectOk("flash", { filePath: FIXTURE_HEX });
@@ -114,7 +114,7 @@ describe("S2a — JLinkExe path: state does not persist between calls", { skip }
  * actually runs in, and the only one where these assertions mean anything.
  */
 describe("S2b — GDB session: halt, inspect, step are coherent", { skip }, () => {
-  const hil = new HilClient();
+  const hil = new HilClient("s02b-gdb");
 
   before(async () => {
     await hil.start();

@@ -14,6 +14,16 @@ import { ProcessManager } from "../../src/utils/process-manager";
  * Both observed on the nRF52840-DK. readFaultRegisters (20) and snapshot (64)
  * were both over-reading, and any caller counting the bytes back got a number
  * that did not match its request.
+ *
+ * The length must be BARE hex. `mem 0xe000edf0, 0x4` is rejected outright —
+ * a first attempt at this fix used the 0x-prefixed form and took out the
+ * DHCSR preflight, so every memory tool started reporting "Target may be
+ * unreachable". Address takes 0x, length does not.
+ *
+ * Note what this suite can and cannot do: it pins the command string, not
+ * J-Link's acceptance of it. Only the hardware tier can tell us which forms
+ * the tool actually takes — this one codified the wrong guess and still
+ * passed.
  */
 describe("readMemory emits an explicit hex byte count", () => {
   function capture(): { cmds: string[][]; backend: JLinkBackend } {
@@ -29,12 +39,12 @@ describe("readMemory emits an explicit hex byte count", () => {
   }
 
   const cases: [number, number, string][] = [
-    [0x00000000, 20, "mem 0x0, 0x14"],
-    [0x00000000, 256, "mem 0x0, 0x100"],
-    [0xe000ed28, 20, "mem 0xe000ed28, 0x14"],
-    [0x20000000, 64, "mem 0x20000000, 0x40"],
-    [0x20000000, 4, "mem 0x20000000, 0x4"],
-    [0x20000000, 4096, "mem 0x20000000, 0x1000"],
+    [0x00000000, 20, "mem 0x0, 14"],
+    [0x00000000, 256, "mem 0x0, 100"],
+    [0xe000ed28, 20, "mem 0xe000ed28, 14"],
+    [0x20000000, 64, "mem 0x20000000, 40"],
+    [0x20000000, 4, "mem 0x20000000, 4"],
+    [0x20000000, 4096, "mem 0x20000000, 1000"],
   ];
 
   for (const [addr, len, expected] of cases) {
@@ -48,7 +58,7 @@ describe("readMemory emits an explicit hex byte count", () => {
   test("the DHCSR preflight read uses the same hex form", async () => {
     const { cmds, backend } = capture();
     await backend.readMemory(0xe000edf0, 4);
-    assert.equal(cmds[cmds.length - 1][0], "mem 0xe000edf0, 0x4");
+    assert.equal(cmds[cmds.length - 1][0], "mem 0xe000edf0, 4");
   });
 
   test("a decimal count would have over-read", () => {

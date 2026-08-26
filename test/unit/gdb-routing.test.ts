@@ -28,9 +28,21 @@ describe("GDB routing — command mapping", () => {
     backend = makeBackend(bridge);
   });
 
-  test("halt uses the monitor channel, not GDB's execution state machine", async () => {
+  test("halt interrupts through GDB so its state view stays consistent", async () => {
+    // `monitor halt` stops the CPU behind GDB's back — the core halts but GDB
+    // still thinks it is running, and later queries block until they time
+    // out. Observed on hardware as read_registers returning nothing through
+    // an otherwise healthy session.
     await backend.halt();
-    assert.deepEqual(bridge.sent, ["monitor halt"]);
+    assert.equal(bridge.sent[0], "interrupt");
+  });
+
+  test("halt falls back to monitor halt when interrupt is refused", async () => {
+    // Nothing to interrupt when the target is already stopped.
+    const b = new FakeGdbBridge({ interrupt: "The program is not being run." });
+    const be = makeBackend(b);
+    await be.halt();
+    assert.deepEqual(b.sent, ["interrupt", "monitor halt"]);
   });
 
   test("resume continues the target", async () => {
@@ -179,13 +191,13 @@ describe("GDB routing — JLINK_MCP_GDB_ROUTING opt-out", () => {
     process.env.JLINK_MCP_GDB_ROUTING = "1";
     const bridge = new FakeGdbBridge();
     await makeBackend(bridge).halt();
-    assert.deepEqual(bridge.sent, ["monitor halt"]);
+    assert.deepEqual(bridge.sent, ["interrupt"]);
   });
 
   test("unset leaves routing enabled", async () => {
     delete process.env.JLINK_MCP_GDB_ROUTING;
     const bridge = new FakeGdbBridge();
     await makeBackend(bridge).halt();
-    assert.deepEqual(bridge.sent, ["monitor halt"]);
+    assert.deepEqual(bridge.sent, ["interrupt"]);
   });
 });

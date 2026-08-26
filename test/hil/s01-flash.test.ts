@@ -7,7 +7,7 @@ import * as path from "path";
 const { FIXTURE } = require(path.join(repoRoot(__dirname), "test", "hil", "fixture", "build-fixture.js"));
 
 describe("S1 — erase, flash, verify", { skip: !ON_HIL_RUNNER && "requires HIL=1" }, () => {
-  const hil = new HilClient();
+  const hil = new HilClient("s01-flash");
   before(async () => { await hil.start(); });
   after(async () => { await hil.stop(); });
 
