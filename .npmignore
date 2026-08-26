@@ -21,3 +21,13 @@ demo/**
 timing-tmp.js
 test/fixtures/**
 CONTRIBUTING.md
+
+# Source maps point at src/, which is not shipped above — so they resolve to
+# nothing for an npm consumer and are pure weight. 2.2 MB of the tarball.
+*.js.map
+*.d.ts.map
+
+# The marketplace icon. Declared via package.json "icon" for the VSIX, which
+# is built from .vscodeignore and unaffected by this file; an npm consumer
+# never reads it. 1.5 MB.
+logo.png
