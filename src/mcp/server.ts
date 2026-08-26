@@ -389,16 +389,22 @@ export class JLinkMcpServer {
       async ({ filePath, baseAddress }) => {
         const g = this.requireDevice(); if (g) return g;
         const addr = baseAddress ? parseInt(baseAddress, 16) : undefined;
-        const r = await probe.flash(filePath, addr);
-        return { content: [{ type: "text", text: r.success ? `Flashed ${filePath}` : `Flash failed: ${r.output}` }] };
+        const text = await this.withGdbSessionRestored("flashing", async () => {
+          const r = await probe.flash(filePath, addr);
+          return { success: r.success, text: r.success ? `Flashed ${filePath}` : `Flash failed: ${JLinkMcpServer.resultText(r, "unknown error")}` };
+        });
+        return { content: [{ type: "text", text }] };
       }
     );
 
     this.server.tool("erase", "Erase target flash memory", {},
       async () => {
         const g = this.requireDevice(); if (g) return g;
-        const r = await probe.erase();
-        return { content: [{ type: "text", text: r.success ? "Chip erased" : `Erase failed: ${r.output}` }] };
+        const text = await this.withGdbSessionRestored("erasing", async () => {
+          const r = await probe.erase();
+          return { success: r.success, text: r.success ? "Chip erased" : `Erase failed: ${JLinkMcpServer.resultText(r, "unknown error")}` };
+        });
+        return { content: [{ type: "text", text }] };
       }
     );
 
@@ -696,6 +702,68 @@ export class JLinkMcpServer {
     } catch {
       return " (warning: could not clear breakpoints)";
     }
+  }
+
+  /**
+   * Run a probe-CLI operation that needs exclusive access to the probe, and
+   * put any live GDB session back afterwards.
+   *
+   * flash and erase must spawn JLinkExe — GDB has no equivalent for writing a
+   * .hex — and a J-Link serves one client at a time. Doing that alongside a
+   * running GDB server evicts the server: the child GDB stays alive attached
+   * to a dead socket, and the caller only finds out when their next command
+   * fails for reasons that look nothing like "your flash did this".
+   *
+   * So take the session down deliberately, do the work, and bring it back.
+   * Every step is reported: silently losing a debug session is the bug, and
+   * silently restoring one would only be a quieter version of the same
+   * problem. If the restore fails the caller is told exactly what state they
+   * are in rather than left to discover it.
+   */
+  private async withGdbSessionRestored(
+    label: string,
+    fn: () => Promise<{ success: boolean; text: string }>
+  ): Promise<string> {
+    const probe = this.probe;
+    const hadServer = probe.isGDBServerRunning();
+    const hadClient = this.gdb.isConnected();
+    const hadRtt = probe.rttConnected;
+    const notes: string[] = [];
+
+    if (hadServer || hadClient) {
+      notes.push(`Stopped the GDB session for ${label} (a probe serves one client at a time).`);
+      if (hadClient) this.gdb.disconnect();
+      if (hadRtt) { this.rttClient.disconnect(); probe.rttConnected = false; }
+      if (hadServer) probe.stopGDBServer();
+      await sleep(500);
+    }
+
+    const result = await fn();
+
+    if (!hadServer && !hadClient) return result.text;
+
+    const restored: string[] = [];
+    const failed: string[] = [];
+    if (hadServer) {
+      const r = await probe.startGDBServer();
+      if (r.success) { restored.push("GDB server"); await sleep(2000); }
+      else failed.push(`GDB server (${r.message})`);
+    }
+    if (hadClient && !failed.length) {
+      const r = await this.gdb.connect("localhost", probe.getGDBServerStatus().gdbPort);
+      if (r.success) restored.push("GDB client");
+      else failed.push(`GDB client (${r.error || r.output})`);
+    }
+    if (hadRtt && !failed.length) {
+      try { await this.rttClient.connect(); probe.rttConnected = true; restored.push("RTT"); }
+      catch (e: any) { failed.push(`RTT (${e?.message ?? e})`); }
+    }
+
+    if (restored.length) notes.push(`Restored: ${restored.join(", ")}.`);
+    if (failed.length) {
+      notes.push(`COULD NOT RESTORE: ${failed.join("; ")}. Reconnect with gdb_connect before debugging further.`);
+    }
+    return [result.text, ...notes].join("\n");
   }
 
   private registerResources(): void {
