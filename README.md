@@ -201,7 +201,7 @@ JLINK_DEVICE=nRF52840_XXAA node out/mcp/standalone.js
 | `device_info` | Probe type, target CPU, compact register summary |
 | `halt` | Halt CPU |
 | `resume` | Resume CPU |
-| `reset` | Reset device (optionally halt after reset) |
+| `reset` | Reset device. `halt` stops it at the reset vector; `strategy` picks a [J-Link reset type](https://kb.segger.com/J-Link_Reset_Strategies), or omit it and let J-Link choose |
 | `step` | Single-step one instruction |
 
 ### Peripherals (CMSIS-SVD)
@@ -449,13 +449,16 @@ It has caught bugs that had been shipping green, including:
   itself healthy
 - sessions leaving the target **unbootable**, with breakpoint comparators still
   armed that no reset clears
+- `reset` reporting success while **doing nothing at all** — the GDB server is a
+  synchronous remote and refuses commands while the target runs, so every
+  command of the reset sequence was rejected in turn and the failure discarded
 
 Raw probe output captured during those runs is committed as golden transcripts,
 so a fast unit tier replays real device bytes in seconds on any machine —
 no probe required to catch a format regression.
 
 ```bash
-npm test          # ~190 tests, seconds, no hardware
+npm test          # ~230 tests, seconds, no hardware
 npm run test:hil  # hardware tier; needs HIL=1 and a probe
 ```
 

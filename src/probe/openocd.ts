@@ -137,7 +137,16 @@ export class OpenOCDBackend extends ProbeBackend {
 
   async halt(): Promise<CommandResult> { return this.exec(["halt"]); }
   async resume(): Promise<CommandResult> { return this.exec(["resume"]); }
-  async reset(halt = false): Promise<CommandResult> {
+  async reset(halt = false, strategy?: number): Promise<CommandResult> {
+    // Refuse rather than silently reset a different way — see ProbeBackend.reset.
+    if (strategy !== undefined) {
+      return {
+        success: false,
+        rawOutput: "",
+        output: "",
+        error: `Reset strategies are a J-Link concept; the OpenOCD backend has no strategy ${strategy}. OpenOCD selects reset behaviour through its own reset run/halt/init modes and the target's config file, not by numeric type.`,
+      };
+    }
     return this.exec([halt ? "reset halt" : "reset run"]);
   }
   async step(): Promise<CommandResult> { return this.exec(["step"]); }

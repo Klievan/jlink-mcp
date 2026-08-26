@@ -265,7 +265,16 @@ export abstract class ProbeBackend {
   abstract getDeviceInfo(): Promise<CommandResult>;
   abstract halt(): Promise<CommandResult>;
   abstract resume(): Promise<CommandResult>;
-  abstract reset(halt?: boolean): Promise<CommandResult>;
+  /**
+   * Reset the target, optionally leaving it stopped at the reset vector.
+   *
+   * `strategy` is a probe-specific reset type. Omitting it — letting the probe
+   * choose — is the right default nearly always. A backend that cannot honour
+   * an explicit strategy must fail rather than reset by some other means: a
+   * caller who names a strategy has a reason, and quietly substituting another
+   * is how a reset comes back "successful" having done something else.
+   */
+  abstract reset(halt?: boolean, strategy?: number): Promise<CommandResult>;
   abstract step(): Promise<CommandResult>;
 
   // ── Memory ───────────────────────────────────────────────────────

@@ -104,3 +104,21 @@ describe("verifying the reset actually took", () => {
     assert.equal((await backend.reset(true)).success, true, "erased flash proves nothing about the reset");
   });
 });
+
+describe("backends that have no reset strategies", () => {
+  // A caller who names a strategy has a reason. Resetting some other way and
+  // reporting success is how you get a reset that "worked" and did something
+  // else entirely.
+  const cases: Array<[string, () => any]> = [
+    ["openocd", () => new (require("../../src/probe/openocd").OpenOCDBackend)({}, new ProcessManager())],
+    ["blackmagic", () => new (require("../../src/probe/blackmagic").BlackMagicBackend)({}, new ProcessManager())],
+  ];
+
+  for (const [name, make] of cases) {
+    test(`${name} refuses an explicit strategy rather than substituting one`, async () => {
+      const r = await make().reset(true, 2);
+      assert.equal(r.success, false);
+      assert.match(r.error ?? "", /strategy 2/);
+    });
+  }
+});

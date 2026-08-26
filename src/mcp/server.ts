@@ -340,12 +340,22 @@ export class JLinkMcpServer {
       }
     );
 
-    this.server.tool("reset", "Reset the target device",
-      { halt: z.boolean().optional().describe("Halt after reset (default: false)") },
-      async ({ halt }) => {
+    this.server.tool("reset",
+      "Reset the target device. Halting leaves the core stopped at the reset vector, " +
+      "which is where you want it before flashing, or to watch startup run.",
+      {
+        halt: z.boolean().optional().describe("Halt at the reset vector after reset (default: false)"),
+        strategy: z.number().optional().describe(
+          "J-Link reset type. Omit to let J-Link pick the right one for the device, which is " +
+          "what SEGGER recommends and is almost always correct. 0 = normal; 1 = core only, via " +
+          "VECTRESET, leaving peripherals running; 2 = drive the reset pin, which fails if that " +
+          "pin is not wired. See https://kb.segger.com/J-Link_Reset_Strategies"
+        ),
+      },
+      async ({ halt, strategy }) => {
         const g = this.requireDevice(); if (g) return g;
         await this.ensureGdbSession();
-        const r = await probe.reset(halt ?? false);
+        const r = await probe.reset(halt ?? false, strategy);
         // `r.output` is empty for a command the GDB client refused, so
         // reporting only that produced a bare "Failed: " with the reason
         // dropped. resultText falls back to the underlying error and its
