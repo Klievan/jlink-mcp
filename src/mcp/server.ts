@@ -1078,6 +1078,9 @@ export class JLinkMcpServer {
     // Pointing it at a known address is not a retry of the scan; it replaces
     // it. Best-effort, and silent when no address is configured, because the
     // stream may well be fine — the scan usually does land.
+    // Needs a GDB client, since the restart has to travel to the GDB server
+    // that owns the RTT port rather than to a JLinkExe of our own.
+    await this.ensureGdbSession();
     await this.probe.restartRTT();
 
     return {
