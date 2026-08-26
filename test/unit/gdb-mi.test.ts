@@ -48,6 +48,19 @@ describe("cleanMI", () => {
     assert.match(out, /Error: Invalid register/);
   });
 
+  test("strips the MI token from result records", () => {
+    // Commands are sent as `<token> <command>` and the result comes back as
+    // `17^done`. Matching only the bare `^done` left the record in the
+    // cleaned text, so every GDB-routed tool appended a stray "17^done" line
+    // to whatever the user asked for — and `^running` stopped being
+    // recognised entirely. Caught by a real capture; the hand-written fixture
+    // had no tokens in it.
+    assert.equal(clean("7^done"), "");
+    assert.equal(clean("12^running"), "(target running)");
+    assert.match(clean('9^error,msg="Invalid register"'), /^Error: Invalid register$/);
+    assert.ok(!clean(golden("gdb-mi-x20bx-raw.txt")).includes("^done"));
+  });
+
   test("returns empty string for empty input", () => {
     assert.equal(clean(""), "");
     assert.equal(clean("(gdb)\n"), "");

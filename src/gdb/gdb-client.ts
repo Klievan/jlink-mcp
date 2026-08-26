@@ -553,13 +553,20 @@ export class GDBClient {
       // &"text\n" → skip (log/debug output)
       if (trimmed.startsWith('&"')) continue;
 
+      // Result records now carry the MI token we prefix commands with, so
+      // `^done` arrives as `17^done`. Matching the bare form left the record
+      // in the cleaned output, where it reached the user as a stray
+      // "17^done" line and stopped `^running` from being recognised at all.
+      // Strip an optional leading token everywhere a result record is matched.
+      const result = trimmed.replace(/^\d+(?=\^)/, "");
+
       // ^done → skip
-      if (trimmed.startsWith("^done") && trimmed.length < 10) continue;
+      if (result.startsWith("^done") && result.length < 10) continue;
       // ^running → note it
-      if (trimmed === "^running") { lines.push("(target running)"); continue; }
+      if (result === "^running") { lines.push("(target running)"); continue; }
 
       // ^error,msg="..." → extract error
-      const errorMatch = trimmed.match(/\^error,msg="(.*)"/);
+      const errorMatch = result.match(/\^error,msg="(.*)"/);
       if (errorMatch) { lines.push(`Error: ${errorMatch[1].replace(/\\"/g, '"')}`); continue; }
 
       // *stopped,reason="..." → format nicely
@@ -572,11 +579,11 @@ export class GDBClient {
       if (trimmed.startsWith("=")) continue;
 
       // ^done,value="..." → extract value
-      const valueMatch = trimmed.match(/\^done,value="(.*)"/);
+      const valueMatch = result.match(/\^done,value="(.*)"/);
       if (valueMatch) { lines.push(valueMatch[1].replace(/\\"/g, '"').replace(/\\n/g, "\n")); continue; }
 
       // Anything else — pass through
-      if (!trimmed.startsWith("^done")) {
+      if (!result.startsWith("^done")) {
         lines.push(trimmed);
       }
     }
