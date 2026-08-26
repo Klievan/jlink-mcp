@@ -43,8 +43,30 @@ describe("S2a — JLinkExe path: state does not persist between calls", { skip }
     record("hil-registers-freerun.txt", regs);
 
     const pc = reg(regs, "PC")!;
-    assert.ok(pc >= FIXTURE.RESET_HANDLER && pc <= FIXTURE.RESET_HANDLER + 0x10,
-      `PC 0x${pc.toString(16)} is outside the fixture's handler — is our image running?`);
+    if (pc >= FIXTURE.RESET_HANDLER && pc <= FIXTURE.RESET_HANDLER + 0x10) return;
+
+    // Landed somewhere else. If it is the fixture's fault trap, the target
+    // took an exception on its way through the reset handler — say which one
+    // and where, instead of just reporting an unexpected PC. This has been
+    // seen intermittently with an identical image, so the run that reproduces
+    // it needs to carry the evidence with it.
+    const detail: string[] = [`PC 0x${pc.toString(16)}`];
+    if (pc >= FIXTURE.FAULT_TRAP && pc <= FIXTURE.FAULT_TRAP + 2) {
+      detail.push("(the fixture's fault trap — the target took an exception)");
+      const diag = await hil.call("diagnose_crash");
+      record("hil-unexpected-fault-diagnose.txt", diag);
+      record("hil-unexpected-fault-registers.txt", regs);
+
+      // The stacked exception frame's PC names the faulting instruction.
+      const sp = reg(regs, "SP");
+      if (sp) {
+        const frame = await hil.call("read_memory", { address: hex(sp), length: 32 });
+        record("hil-unexpected-fault-frame.txt", frame);
+        detail.push(`stacked frame at 0x${sp.toString(16)}:\n${frame}`);
+      }
+      detail.push(diag);
+    }
+    assert.fail(`target is not running the fixture. ${detail.join("\n")}`);
   });
 
   test("SP is exactly the vector table's initial MSP", async () => {
