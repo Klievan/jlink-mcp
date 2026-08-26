@@ -78,7 +78,29 @@ Fault decoded, exception frame unwound, faulting instruction named, and the
 device's own log correlated — from one call, without a human reading a
 datasheet to find out what bit 24 of CFSR means.
 
-*Verbatim output from an nRF52840-DK in this project's hardware test suite.*
+### And it knows what the silicon is
+
+Point it at your target's CMSIS-SVD file and peripheral registers stop being
+hex:
+
+```
+> read_peripheral FICR
+
+FICR @ 0x10000000
+INFO.PART @ 0x10000100 = 0x00052840  (read-only)
+  [31:0]    PART             0x52840 → N52840
+INFO.RAM @ 0x1000010C = 0x00000100  (read-only)
+  [31:0]    RAM              0x100 → K256
+INFO.FLASH @ 0x10000110 = 0x00000400  (read-only)
+  [31:0]    FLASH            0x400 → K1024
+```
+
+`0x400` means 1024 KB of flash — but only if you know that, and an LLM guessing
+at bit layouts is exactly the failure this avoids. The addresses come from the
+vendor's own description, and the meanings from its enumerations.
+
+*Both transcripts are verbatim output from an nRF52840-DK in this project's
+hardware test suite.*
 
 ## What is this?
 
@@ -154,7 +176,7 @@ npm run compile
 JLINK_DEVICE=nRF52840_XXAA node out/mcp/standalone.js
 ```
 
-## Tools (39)
+## Tools (42)
 
 ### Workflow Tools (start here)
 
@@ -181,6 +203,17 @@ JLINK_DEVICE=nRF52840_XXAA node out/mcp/standalone.js
 | `resume` | Resume CPU |
 | `reset` | Reset device (optionally halt after reset) |
 | `step` | Single-step one instruction |
+
+### Peripherals (CMSIS-SVD)
+
+Set `jlinkMcp.svdPath` to your target's SVD — the same file Cortex-Debug takes
+as `svdFile`. Vendors publish one per part.
+
+| Tool | Description |
+|------|-------------|
+| `list_peripherals` | Every peripheral and base address on the chip |
+| `read_peripheral` | Read a peripheral's registers and decode each one's bit fields by name |
+| `decode_register` | Decode one register — read from the device, or interpret a value you already have |
 
 ### Memory & Registers
 
@@ -387,6 +420,12 @@ Both captured from the same board. The rest of the design follows the same rule
 - **Composite tools** (`start_debug_session`, `snapshot`, `diagnose_crash`) replace multi-step workflows with single calls.
 - **Fault decoding** is automatic — reads CFSR/HFSR/MMFAR/BFAR and explains each bit.
 - **`rtt_search`** lets you find errors without reading the entire log.
+- **Peripheral registers** decode through the vendor's own CMSIS-SVD, so the
+  model reads `RAM = K256` rather than guessing what `0x100` means in that
+  field of that register.
+- **Failures say what to do.** "Target is running; use halt" beats "could not
+  read memory", and a fault-register read that did not happen reports itself
+  rather than decoding zeroes into "no faults detected".
 
 ## Verified on real hardware
 

@@ -20,3 +20,4 @@ demo/**
 *.tape
 timing-tmp.js
 test/fixtures/**
+CONTRIBUTING.md
