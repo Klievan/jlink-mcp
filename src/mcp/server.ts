@@ -123,6 +123,22 @@ export class JLinkMcpServer {
           steps.push("GDB Server: already running");
         }
 
+        // The GDB server halts the core when it attaches. Leaving it that way
+        // makes this tool stop the user's firmware and then report "No RTT
+        // output yet" — which reads as RTT being broken rather than as the
+        // target having been stopped by the very call meant to start observing
+        // it. Resume before connecting RTT, and say so.
+        //
+        // Order matters as well as the act: the probe locates the RTT control
+        // block by scanning RAM when RTT connects, and firmware that sets that
+        // block up at boot must have reached that point first. Connect too
+        // early and the scan finds nothing and is never retried.
+        const resumed = await probe.resume();
+        steps.push(resumed.success
+          ? "Target: resumed (the GDB server halts the core when it attaches)"
+          : `Target: could not resume - ${JLinkMcpServer.resultText(resumed, "unknown error")}`);
+        await sleep(500);
+
         if (probe.supportsRTT() && !this.rttClient.isConnected()) {
           try {
             this.rttClient.clearBuffer(); // Clear stale buffers from previous sessions
@@ -145,7 +161,11 @@ export class JLinkMcpServer {
           steps.push(`\n--- Device Output (${lines.length} lines) ---`);
           steps.push(lines.join("\n"));
         } else {
-          steps.push("\nNo RTT output yet.");
+          steps.push(
+            "\nNo RTT output yet. If the target logs over RTT: check it is running, and " +
+            "note the probe locates the RTT control block by scanning RAM at connect time — " +
+            "firmware that initialises that block at boot must have reached that point first."
+          );
         }
 
         return { content: [{ type: "text", text: steps.join("\n") }] };

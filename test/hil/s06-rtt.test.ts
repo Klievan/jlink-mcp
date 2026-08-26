@@ -22,12 +22,15 @@ describe("S6 — RTT logging and the down channel", { skip }, () => {
     await hil.expectOk("flash", { filePath: RTT_FIXTURE_HEX });
     await hil.expectOk("gdb_server_start");
     await sleep(1500);
-    await hil.expectOk("rtt_connect");
-    // The server halts the core on attach and holds it. Reset then resume so
-    // the fixture is actually executing — otherwise RTT is connected to a
-    // target that never produces a line, which reads as "RTT is broken".
+    // Get the target running BEFORE connecting RTT. The probe locates the RTT
+    // control block by scanning RAM at connect time, and this firmware writes
+    // it at boot — as SEGGER's own does, deliberately, so a half-booted target
+    // is not mistaken for a ready one. Connect too early and the scan finds
+    // nothing and is never retried: RTT stays silent forever with no error.
     await hil.expectOk("reset", { halt: false });
     await hil.expectOk("resume");
+    await sleep(1000); // let rtt_init run
+    await hil.expectOk("rtt_connect");
     await sleep(1500); // let the boot banner land
   });
 
@@ -103,9 +106,18 @@ describe("S6 — RTT logging and the down channel", { skip }, () => {
   });
 
   test("the target keeps running while RTT is connected", async () => {
+    // Sample either side of a run window. Memory cannot be read while a
+    // synchronous remote is executing, so halting to read is not an
+    // observation error — it is the only way to observe at all.
+    await hil.expectOk("halt");
     const a = word32(await hil.expectOk("read_memory", { address: hex(sym("test_counter")), length: 4 }));
-    await sleep(300);
+    await hil.expectOk("resume");
+    await sleep(400);
+    await hil.expectOk("halt");
     const b = word32(await hil.expectOk("read_memory", { address: hex(sym("test_counter")), length: 4 }));
+    await hil.expectOk("resume");
+
+    assert.notEqual(a, null, "could not read the counter");
     assert.notEqual(a, b, "counter frozen — RTT polling should not stall the target");
   });
 
