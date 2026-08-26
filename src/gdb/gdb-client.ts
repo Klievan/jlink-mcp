@@ -45,6 +45,17 @@ export class GDBClient {
     sawResult: boolean;
   } | null = null;
   private tokenCounter = 0;
+  /**
+   * Serializes `command()` calls.
+   *
+   * There is one `pending` slot and one output buffer, so two commands in
+   * flight at once clobber each other: the second overwrites the first's
+   * resolver, and the first only ever settles on its own timeout, with
+   * whatever happened to be in the buffer. MCP tool calls can genuinely
+   * overlap — and the probe backend's own lock does not cover the GDB path,
+   * which returns before `withPreflight` is ever reached.
+   */
+  private queue: Promise<unknown> = Promise.resolve();
   private stopEvent: string | null = null;
   private history: string[] = [];
   private maxHistory = 200;
@@ -75,7 +86,11 @@ export class GDBClient {
     /monitor command not supported by this target/i,
     /program has no registers now/i,
     /No target selected/i,
-    /Cannot execute this command (while|without) the (target|selected thread)/i,
+    // Deliberately NOT matching "Cannot execute this command while the target
+    // is running." That is GDB disagreeing with us about the target's state,
+    // not the link being gone — treating it as remote-loss tore down a
+    // perfectly healthy session and reconnected for no reason.
+    /Cannot execute this command without a live selected thread/i,
   ];
 
   /**
@@ -136,10 +151,16 @@ export class GDBClient {
             clearInterval(checkInterval);
             this.outputBuffer = "";
             // Now send the connect command
-            this.sendCommand(`target remote ${host}:${port}`, 15000).then((connectResult) => {
+            this.sendCommand(`target remote ${host}:${port}`, 15000).then(async (connectResult) => {
               if (connectResult.includes("Remote debugging") || connectResult.includes("connected") || connectResult.includes("stopped")) {
                 this.connected = true;
                 this.lastConnectParams = { host, port, elfFile };
+                // Asynchronous MI lets GDB accept commands while the target
+                // runs, and lets `interrupt` actually stop it. Without this,
+                // querying a running target blocks until our timeout and the
+                // caller gets an empty response — which reads as a healthy
+                // but silent target rather than as a state mismatch.
+                await this.sendCommand("set mi-async on", 5000).catch(() => "");
                 resolve({ success: true, output: `Connected to GDB server at ${host}:${port}\n${this.cleanMI(connectResult)}` });
               } else {
                 resolve({ success: false, output: this.cleanMI(connectResult), error: "Failed to connect to GDB server" });
@@ -168,6 +189,17 @@ export class GDBClient {
    * If the target doesn't stop in time, returns with a "target running" message.
    */
   async command(cmd: string, timeout: number = 15000): Promise<GDBResponse> {
+    // Queue rather than run concurrently. Settled either way so one failure
+    // does not poison every later command.
+    const run = this.queue.then(
+      () => this.commandUnqueued(cmd, timeout),
+      () => this.commandUnqueued(cmd, timeout)
+    );
+    this.queue = run.then(() => undefined, () => undefined);
+    return run;
+  }
+
+  private async commandUnqueued(cmd: string, timeout: number): Promise<GDBResponse> {
     // Auto-reconnect if connection dropped
     if ((!this.proc || !this.connected) && this.lastConnectParams) {
       log("[GDB] Connection lost, attempting auto-reconnect...");
@@ -411,10 +443,14 @@ export class GDBClient {
       this.history.push(`> ${cmd}`);
       if (this.history.length > this.maxHistory) this.history.shift();
 
-      log(`[GDB] > ${token} ${cmd}`);
-      // MI accepts `<token> <cli command>` and echoes the token on the
-      // matching result record. Verified against arm-none-eabi-gdb.
-      this.proc.stdin.write(`${token} ${cmd}\n`);
+      // MI echoes the token on the matching result record. The separator
+      // matters: MI operations are `<token>-operation` with no space, while
+      // CLI commands are `<token> command`. Getting it wrong turns
+      // `-exec-interrupt` into an undefined CLI command. Verified against
+      // arm-none-eabi-gdb.
+      const sep = cmd.startsWith("-") ? "" : " ";
+      log(`[GDB] > ${token}${sep}${cmd}`);
+      this.proc.stdin.write(`${token}${sep}${cmd}\n`);
 
       // Timeout
       setTimeout(() => {

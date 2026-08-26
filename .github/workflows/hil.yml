@@ -64,8 +64,8 @@ jobs:
           JLINK_DEVICE: NRF52840_XXAA
         run: npm run test:hil
 
-      - name: Captured transcripts
-        if: always() && inputs.record
+      - name: Captured transcripts and server logs
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: golden-captures

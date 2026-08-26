@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { HilClient, NRF52840, ON_HIL_RUNNER, record, word32, hex, FIXTURE_HEX } from "./harness/mcp-client";
 
 describe("S3 — memory and peripherals", { skip: !ON_HIL_RUNNER && "requires HIL=1" }, () => {
-  const hil = new HilClient();
+  const hil = new HilClient("s03-memory");
 
   before(async () => {
     await hil.start();

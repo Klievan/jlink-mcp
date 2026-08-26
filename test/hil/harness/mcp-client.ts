@@ -46,6 +46,12 @@ export class HilClient {
   private client!: Client;
   private transport!: StdioClientTransport;
   private stderrChunks: string[] = [];
+  private label: string;
+
+  /** @param label distinguishes this client's log from other suites' */
+  constructor(label = "default") {
+    this.label = label;
+  }
 
   async start(opts: HilClientOptions = {}): Promise<void> {
     const serverPath = path.join(ROOT, "out", "mcp", "standalone.js");
@@ -110,6 +116,11 @@ export class HilClient {
   }
 
   async stop(): Promise<void> {
+    // Always dump the server log. It carries every J-Link and GDB invocation
+    // the server made, and it is the difference between diagnosing a hardware
+    // failure and guessing at it — three rounds of this suite were read from
+    // tool output alone because this was captured but never written out.
+    if (this.stderrChunks.length) record(`server-stderr-${this.label}.log`, this.stderr);
     try {
       await this.client?.close();
     } catch {
@@ -133,7 +144,9 @@ const CAPTURE_DIR = path.join(ROOT, "test", "golden", "captured");
  * can't silently rewrite the baseline.
  */
 export function record(name: string, content: string): void {
-  if (!RECORD) return;
+  // Server logs are always written, recording mode or not — they are
+  // diagnostics, not fixtures.
+  if (!RECORD && !name.startsWith("server-stderr")) return;
   fs.mkdirSync(CAPTURE_DIR, { recursive: true });
   fs.writeFileSync(path.join(CAPTURE_DIR, name), content);
 }

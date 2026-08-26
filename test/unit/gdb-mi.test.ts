@@ -87,15 +87,16 @@ describe("REMOTE_LOSS_PATTERNS", () => {
     });
   }
 
-  test("known gap: a halt-desynced GDB reports the target as running", () => {
-    // `monitor halt` stops the CPU behind GDB's back — no *stopped record —
-    // so GDB still believes the target runs and rejects the next
-    // `info registers` with this message. It currently matches the
-    // remote-loss table and forces a needless session teardown.
-    //
-    // This test documents the behaviour rather than asserting it is correct.
-    // When the halt/GDB state desync is fixed, flip this to assert false.
-    const msg = "Cannot execute this command while the target is running.";
-    assert.ok(isRemoteLoss(msg), "if this now fails, the desync was fixed — invert the assertion");
+  test("a running-target state error is not treated as remote loss", () => {
+    // GDB disagreeing with us about whether the target is running is a state
+    // mismatch, not a dead link. Treating it as remote-loss tore down a
+    // healthy session and reconnected for no reason. halt() now interrupts
+    // through GDB so the disagreement should not arise, but the table must
+    // not punish it if it does.
+    assert.ok(!isRemoteLoss("Cannot execute this command while the target is running."));
+  });
+
+  test("a genuinely dead thread still counts as remote loss", () => {
+    assert.ok(isRemoteLoss("Cannot execute this command without a live selected thread."));
   });
 });

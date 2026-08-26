@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { HilClient, NRF52840, ON_HIL_RUNNER, record } from "./harness/mcp-client";
 
 describe("S0 — discovery and configuration", { skip: !ON_HIL_RUNNER && "requires HIL=1" }, () => {
-  const hil = new HilClient();
+  const hil = new HilClient("s00-discovery");
   before(async () => { await hil.start(); });
   after(async () => { await hil.stop(); });
 

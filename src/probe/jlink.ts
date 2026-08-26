@@ -294,7 +294,21 @@ export class JLinkBackend extends ProbeBackend {
     return this.withPreflight("getDeviceInfo", () => this.execRaw(["halt", "regs"]));
   }
   async halt(): Promise<CommandResult> {
-    if (this.useGdb()) return this.runViaGdb("monitor halt", 5000);
+    if (this.useGdb()) {
+      // `interrupt` first, so GDB itself stops the target and updates its own
+      // view of the execution state. `monitor halt` stops the CPU behind
+      // GDB's back: the core is genuinely halted but GDB still believes it is
+      // running, and every subsequent query either errors or blocks until it
+      // times out. On hardware that showed up as read_registers returning
+      // nothing at all through a session that was otherwise healthy.
+      //
+      // Requires asynchronous MI, which the client enables at connect. Fall
+      // back to `monitor halt` when interrupt is refused — notably when the
+      // target is already stopped, where there is nothing to interrupt.
+      const r = await this.runViaGdb("interrupt", 5000);
+      if (r.success && !/error|not being run|Undefined command/i.test(r.output)) return r;
+      return this.runViaGdb("monitor halt", 5000);
+    }
     return this.withPreflight("halt", () => this.execRaw(["halt"]));
   }
   async resume(): Promise<CommandResult> {
@@ -337,18 +351,24 @@ export class JLinkBackend extends ProbeBackend {
   /**
    * Read `length` bytes at `address`.
    *
-   * The byte count goes to J-Link Commander as an explicit hex literal.
-   * `mem` parses its length argument as hex, so a decimal count is silently
-   * misread: `mem 0x0, 20` returns 0x20 = 32 bytes and `mem 0x0, 256` returns
-   * 0x256 = 598. Both observed on hardware. Every caller passing a decimal
-   * length — readFaultRegisters asking for 20, snapshot asking for 64 — was
-   * over-reading, and any caller counting the bytes back got the wrong answer.
+   * The byte count goes to J-Link Commander as bare hex digits.
+   *
+   * `mem` parses its length as hex, so a decimal count is silently misread:
+   * `mem 0x0, 20` returns 0x20 = 32 bytes and `mem 0x0, 256` returns 0x256 =
+   * 598. Both observed on hardware. Every caller passing a decimal length —
+   * readFaultRegisters asking for 20, snapshot asking for 64 — was
+   * over-reading, and any caller counting bytes back got the wrong answer.
+   *
+   * It must be bare hex, NOT 0x-prefixed: `mem 0xe000edf0, 0x4` is rejected
+   * outright, which took out even the DHCSR preflight read and made every
+   * memory tool report "Target may be unreachable". Address takes 0x, length
+   * does not.
    */
   async readMemory(address: number, length: number): Promise<CommandResult> {
     if (this.useGdb()) return this.readMemoryViaGdb(address, length);
     // Skip preflight when reading DHCSR (that IS the preflight)
     const isDHCSR = address === 0xE000EDF0;
-    const cmd = `mem 0x${address.toString(16)}, 0x${length.toString(16)}`;
+    const cmd = `mem 0x${address.toString(16)}, ${length.toString(16)}`;
     if (isDHCSR) return this.acquireLock(() => this.execRaw([cmd]));
     return this.withPreflight("readMemory", () => this.execRaw([cmd]));
   }
