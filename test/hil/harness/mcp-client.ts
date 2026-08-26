@@ -17,6 +17,20 @@ const ROOT = repoRoot(__dirname);
 
 export const FIXTURE_HEX = path.join(ROOT, "test", "hil", "fixture", "fixture.hex");
 
+/** The talking fixture: RTT, a command channel, symbols, fault injection. */
+export const RTT_FIXTURE_HEX = path.join(ROOT, "test", "hil", "fixture", "rtt-fixture.hex");
+export const RTT_FIXTURE_ELF = path.join(ROOT, "test", "hil", "fixture", "rtt-fixture.elf");
+
+/** Symbol addresses exported by the RTT fixture build. */
+export const RTT_SYMS: Record<string, string> = JSON.parse(
+  fs.readFileSync(path.join(ROOT, "test", "hil", "fixture", "symbols.json"), "utf8")
+);
+export const sym = (name: string): number => {
+  const v = RTT_SYMS[name];
+  if (!v) throw new Error(`no such fixture symbol: ${name}`);
+  return parseInt(v, 16);
+};
+
 /** Ground truth for the nRF52840-DK. Values the silicon guarantees. */
 export const NRF52840 = {
   device: "NRF52840_XXAA",
