@@ -217,7 +217,7 @@ export class JLinkMcpServer {
 
         const faultData = await probe.readFaultRegisters();
         sections.push("\n### Fault Registers");
-        sections.push(`CFSR=0x${faultData.raw.cfsr.toString(16).padStart(8, "0")} HFSR=0x${faultData.raw.hfsr.toString(16).padStart(8, "0")} MMFAR=0x${faultData.raw.mmfar.toString(16).padStart(8, "0")} BFAR=0x${faultData.raw.bfar.toString(16).padStart(8, "0")}`);
+        sections.push(`CFSR=0x${faultData.raw.cfsr.toString(16).padStart(8, "0")} HFSR=0x${faultData.raw.hfsr.toString(16).padStart(8, "0")} DFSR=0x${faultData.raw.dfsr.toString(16).padStart(8, "0")} MMFAR=0x${faultData.raw.mmfar.toString(16).padStart(8, "0")} BFAR=0x${faultData.raw.bfar.toString(16).padStart(8, "0")}`);
         sections.push("\n### Decoded Faults");
         sections.push(faultData.decoded);
 
@@ -429,7 +429,13 @@ export class JLinkMcpServer {
     );
 
     this.server.tool("gdb_server_stop", `Stop ${probe.displayName} GDB server and disconnect RTT`, {},
-      async () => { this.rttClient.disconnect(); probe.rttConnected = false; const r = probe.stopGDBServer(); return { content: [{ type: "text", text: r.message }] }; }
+      async () => {
+        const cleared = this.gdb.isConnected() ? await this.clearDebugState() : "";
+        this.rttClient.disconnect();
+        probe.rttConnected = false;
+        const r = probe.stopGDBServer();
+        return { content: [{ type: "text", text: `${r.message}${cleared}` }] };
+      }
     );
 
     this.server.tool("gdb_server_status", "Get GDB server, RTT, and telnet proxy status", {},
@@ -533,8 +539,16 @@ export class JLinkMcpServer {
       "Disconnect the GDB client (does not stop the GDB server)",
       {},
       async () => {
+        // Clear breakpoints first. Debug resources — FPB comparators, vector
+        // catches — are not cleared by the reset a probe issues, so a session
+        // that just walks away leaves them armed. The target then takes a
+        // debug event with no debugger attached, which escalates straight to
+        // HardFault: observed on hardware as a board that ran fine until it
+        // had once been debugged, then HardFaulted three instructions into
+        // reset with CFSR clear and HFSR.DEBUGEVT set.
+        const cleared = this.gdb.isConnected() ? await this.clearDebugState() : "";
         this.gdb.disconnect();
-        return { content: [{ type: "text", text: "GDB client disconnected" }] };
+        return { content: [{ type: "text", text: `GDB client disconnected${cleared}` }] };
       }
     );
 
@@ -666,6 +680,22 @@ export class JLinkMcpServer {
     const parts = [r.error, r.suggestedAction].filter((x) => x && x.trim());
     if (parts.length) return parts.join(" ");
     return fallback;
+  }
+
+  /**
+   * Drop every breakpoint before a session ends.
+   *
+   * Best-effort and never fatal: failing to tidy up must not stop the caller
+   * disconnecting. Returns a note to append to the tool's reply so the action
+   * is visible rather than silent.
+   */
+  private async clearDebugState(): Promise<string> {
+    try {
+      const r = await this.probe.clearBreakpoints();
+      return r.success ? " (breakpoints cleared)" : " (warning: could not clear breakpoints)";
+    } catch {
+      return " (warning: could not clear breakpoints)";
+    }
   }
 
   private registerResources(): void {
