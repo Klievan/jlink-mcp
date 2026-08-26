@@ -457,6 +457,49 @@ export abstract class ProbeBackend {
     return results;
   }
 
+  /**
+   * Disarm the Cortex-M debug hardware so the target is left bootable.
+   *
+   * A breakpoint comparator left armed in the Flash Patch and Breakpoint unit
+   * re-triggers on every subsequent run. With no debugger attached the debug
+   * event escalates to HardFault, and the CPU parks in its fault handler
+   * permanently — inherited by every later session, and not cleared by a
+   * probe-issued reset, which by design leaves the debug block alone so a
+   * debugger keeps control across target resets.
+   *
+   * Zeroing the comparators is the part that matters. FP_CTRL.ENABLE is
+   * re-enabled by the J-Link DLL on every attach, so disabling the unit is
+   * not durable on its own — it is only safe while the comparators are clear.
+   *
+   * Best-effort: this runs during teardown, where failing to tidy up must not
+   * prevent the caller from disconnecting.
+   */
+  async disarmDebugState(): Promise<{ ok: boolean; detail: string }> {
+    // FP_COMP0..5. Six is the nRF52840's complement; writing past the
+    // implemented set is harmless and keeps this generic across Cortex-M.
+    const comparators = [0xe0002008, 0xe000200c, 0xe0002010, 0xe0002014, 0xe0002018, 0xe000201c];
+    const writes: [number, number, string][] = [
+      ...comparators.map((a, i) => [a, 0x00000000, `FP_COMP${i}`] as [number, number, string]),
+      // KEY=1, ENABLE=0. The key bit is required for any write to take.
+      [0xe0002000, 0x00000002, "FP_CTRL"],
+      // Clears every vector-catch enable, which can trap just as durably.
+      [0xe000edfc, 0x00000000, "DEMCR"],
+    ];
+
+    const failed: string[] = [];
+    for (const [addr, value, name] of writes) {
+      try {
+        const r = await this.writeMemory(addr, value);
+        if (!r.success) failed.push(name);
+      } catch {
+        failed.push(name);
+      }
+    }
+    return failed.length
+      ? { ok: false, detail: `could not disarm ${failed.join(", ")}` }
+      : { ok: true, detail: "debug hardware disarmed" };
+  }
+
   /** Read fault registers and decode them (ARM Cortex-M specific) */
   async readFaultRegisters(): Promise<{
     result: CommandResult;
