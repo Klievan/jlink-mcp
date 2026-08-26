@@ -71,6 +71,10 @@ export function activate(context: vscode.ExtensionContext) {
         put("JLINK_GDB_PORT", cfg.get<number>("jlink.gdbPort"));
         put("JLINK_RTT_PORT", cfg.get<number>("jlink.rttTelnetPort"));
         put("JLINK_SWO_PORT", cfg.get<number>("jlink.swoTelnetPort"));
+        // Read as hex with or without an 0x prefix, since that is how a map
+        // file reports a symbol address.
+        const rttAddr = cfg.get<string>("rtt.controlBlockAddress")?.trim();
+        if (rttAddr) put("JLINK_RTT_ADDR", String(parseInt(rttAddr, 16)));
 
         // OpenOCD
         put("OPENOCD_BINARY", cfg.get<string>("openocd.binaryPath"));

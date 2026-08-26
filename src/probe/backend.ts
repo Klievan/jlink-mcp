@@ -55,6 +55,7 @@ export interface GDBServerInfo {
   gdbPort: number;
   /** Port for RTT telnet access (J-Link specific, -1 if not supported) */
   rttTelnetPort: number;
+  rttControlBlockAddress?: number;
 }
 
 export interface ProbeStatus {
@@ -327,6 +328,19 @@ export abstract class ProbeBackend {
 
   /** Whether this probe supports RTT */
   supportsRTT(): boolean { return false; }
+
+  /**
+   * Restart host-side RTT collection after a target reset.
+   *
+   * A reset does not stop the target writing to its RTT buffer, but on J-Link
+   * it does stop the probe draining it — so every later read reports nothing,
+   * which is indistinguishable from a quiet target. Backends that can recover
+   * from that override this; the rest say plainly that they cannot, because
+   * an unrecoverable stream reported as empty is the more expensive answer.
+   */
+  async restartRTT(): Promise<{ ok: boolean; detail: string }> {
+    return { ok: false, detail: `${this.displayName} cannot restart RTT collection` };
+  }
 
   /** RTT telnet port when GDB server is running (-1 if not supported) */
   getRTTPort(): number { return -1; }

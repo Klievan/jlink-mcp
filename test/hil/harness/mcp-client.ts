@@ -79,6 +79,11 @@ export class HilClient {
       env: {
         ...(process.env as Record<string, string>),
         JLINK_DEVICE: NRF52840.device,
+        // The fixture's _SEGGER_RTT symbol. J-Link finds the control block by
+        // scanning RAM and never reports the address back, so it has to come
+        // from somewhere — and without it RTT cannot be restarted after a
+        // reset, which is a case these suites exercise directly.
+        JLINK_RTT_ADDR: String(sym("_SEGGER_RTT")),
         ...opts.env,
       },
       // Captured rather than inherited: the server logs every J-Link and GDB

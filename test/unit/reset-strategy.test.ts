@@ -122,3 +122,35 @@ describe("backends that have no reset strategies", () => {
     });
   }
 });
+
+describe("restarting RTT collection after a reset", () => {
+  // Measured on an nRF52840 across a reset, sampling SEGGER's control block
+  // from both ends: the target's write pointer moved 582 -> 802 while the
+  // host's read pointer stayed at 0. The firmware was still logging; the
+  // probe had stopped collecting. Every later read then says "No RTT output
+  // yet", which is exactly what a quiet target says.
+  function backend(addr?: number) {
+    const b = new JLinkBackend(
+      { device: "NRF52840_XXAA", ...(addr === undefined ? {} : { rttControlBlockAddress: addr }) } as any,
+      new ProcessManager()
+    );
+    const scripts: string[][] = [];
+    (b as any).execRaw = async (c: string[]) => { scripts.push(c); return { success: true, rawOutput: "", output: "" }; };
+    return { b, scripts };
+  }
+
+  test("re-points the probe at the control block", async () => {
+    const { b, scripts } = backend(0x20000000);
+    const r = await b.restartRTT();
+    assert.equal(r.ok, true, r.detail);
+    assert.deepEqual(scripts[0], ["exec SetRTTAddr 0x20000000"]);
+  });
+
+  test("says why it cannot, rather than leaving a dead stream looking quiet", async () => {
+    const { b, scripts } = backend();
+    const r = await b.restartRTT();
+    assert.equal(r.ok, false);
+    assert.match(r.detail, /JLINK_RTT_ADDR/, "must say how to fix it");
+    assert.equal(scripts.length, 0, "nothing to send without an address");
+  });
+});

@@ -360,9 +360,23 @@ export class JLinkMcpServer {
         // reporting only that produced a bare "Failed: " with the reason
         // dropped. resultText falls back to the underlying error and its
         // suggested action.
-        return { content: [{ type: "text", text: r.success
-          ? `Device reset${halt ? " (halted at the reset vector)" : " (running)"}`
-          : `Reset failed: ${JLinkMcpServer.resultText(r, "no reason reported")}` }] };
+        if (!r.success) {
+          return { content: [{ type: "text", text: `Reset failed: ${JLinkMcpServer.resultText(r, "no reason reported")}` }] };
+        }
+
+        // A reset does not stop the target logging, but it does stop the probe
+        // collecting — measured across a reset, the target's write pointer
+        // advanced 582 -> 802 while the host's read pointer stayed at 0. Left
+        // alone, every later rtt_read reports "No RTT output yet", which reads
+        // exactly like a quiet target.
+        let rttNote = "";
+        if (probe.rttConnected) {
+          const restarted = await probe.restartRTT();
+          rttNote = restarted.ok ? " RTT collection restarted." : ` RTT: ${restarted.detail}`;
+        }
+
+        return { content: [{ type: "text", text:
+          `Device reset${halt ? " (halted at the reset vector)" : " (running)"}.${rttNote}` }] };
       }
     );
 
