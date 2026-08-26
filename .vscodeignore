@@ -19,3 +19,6 @@ test/**
 out-test/**
 tsconfig.test.json
 .github/**
+demo/**
+*.tape
+timing-tmp.js

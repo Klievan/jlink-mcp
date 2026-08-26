@@ -136,7 +136,7 @@ Add `.mcp.json` to your project root:
 
 ### VSCode Extension
 
-Install the extension (requires VSCode 1.99+). It auto-registers the MCP server via the native `vscode.lm` API. Configure the device in settings:
+Install the extension (requires VSCode 1.110+, matching `engines.vscode`). It auto-registers the MCP server via the native `vscode.lm` API. Configure the device in settings:
 
 ```
 jlinkMcp.jlink.device = "nRF52840_XXAA"

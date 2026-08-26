@@ -684,7 +684,9 @@ export class JLinkMcpServer {
     // TELNET PROXY
     // ═══════════════════════════════════════════════════════════════
 
-    this.server.tool("telnet_proxy_start", "Start TCP proxy for Trice/Pigweed detokenizer", {},
+    this.server.tool("telnet_proxy_start",
+      "Start a TCP relay that re-serves the RTT stream on another port, so an external decoder (Trice, Pigweed, or your own) can consume it alongside this server. It relays bytes; it does not decode them.",
+      {},
       async () => { const r = await this.telnetProxy.start(); return { content: [{ type: "text", text: r.message }] }; }
     );
     this.server.tool("telnet_proxy_stop", "Stop telnet proxy", {},
