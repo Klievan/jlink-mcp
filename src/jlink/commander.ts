@@ -1,5 +1,6 @@
 import { spawn } from "child_process";
 import { getConfig, getJLinkExePath } from "../utils/config";
+import { emitJLinkCommands, resolveDeviceProfile } from "../probe/device-profiles";
 import { log, logError } from "../utils/logger";
 
 export interface JLinkCommandResult {
@@ -221,6 +222,11 @@ export function decodeFaultRegisters(cfsr: number, hfsr: number, mmfar: number, 
 /**
  * Executes J-Link Commander commands by spawning JLinkExe with a script.
  * Each call opens a new connection, runs the commands, and exits.
+ *
+ * The device profile (see `probe/device-profiles.ts`) can override the
+ * initial SWD clock and prepend one-shot setup commands after attach.
+ * This keeps target-family quirks (STM32 low-power DBGMCU writes, etc.)
+ * out of the generic Commander wrapper.
  */
 export async function executeJLinkCommands(
   commands: string[],
@@ -230,12 +236,22 @@ export async function executeJLinkCommands(
   const jlinkExe = getJLinkExePath(config.jlink);
 
   const device = deviceOverride || config.jlink.device;
-  const scriptLines = [...commands, "exit"];
+  const profile = resolveDeviceProfile(device);
+  const speed = profile.speedKhz ?? config.jlink.speed;
+
+  // Emit the profile's post-attach ops for the Commander channel. Ops
+  // the channel can't express (read-modify-write bit sets) are silently
+  // dropped here because the log noise would be per-call; the skip is
+  // reported once at backend init (see JLinkBackend.logProfile).
+  const emitted = profile.postAttachOps
+    ? emitJLinkCommands(profile.postAttachOps)
+    : { commands: [], skipped: [] };
+  const scriptLines = [...emitted.commands, ...commands, "exit"];
 
   const args = [
     "-device", device,
     "-if", config.jlink.interface,
-    "-speed", String(config.jlink.speed),
+    "-speed", String(speed),
     "-autoconnect", "1",
     "-ExitOnError", "1",
     "-NoGui", "1",
@@ -245,7 +261,8 @@ export async function executeJLinkCommands(
     args.push("-SelectEmuBySN", config.jlink.serialNumber);
   }
 
-  log(`JLink Commander: ${commands.join("; ")}`);
+  const profileNote = profile.id !== "default" ? ` [profile=${profile.id}, speed=${speed}]` : "";
+  log(`JLink Commander: ${commands.join("; ")}${profileNote}`);
 
   return new Promise<JLinkCommandResult>((resolve) => {
     const proc = spawn(jlinkExe, args, {

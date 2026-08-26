@@ -199,7 +199,8 @@
     "prepublishOnly": "npm run build",
     "vscode:prepublish": "npm run build",
     "package": "npm run build && vsce package",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test": "tsc -p tsconfig.test.json && node --test 'out-test/test/**/*.test.js'"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

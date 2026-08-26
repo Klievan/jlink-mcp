@@ -1,5 +1,6 @@
 import { spawn } from "child_process";
 import { ProbeBackend, ProbeState, ProbeErrorCode, CommandResult, GDBServerInfo } from "./backend";
+import { DeviceProfile, emitJLinkCommands, resolveDeviceProfile } from "./device-profiles";
 import { ProcessManager } from "../utils/process-manager";
 import { log, logError } from "../utils/logger";
 import * as path from "path";
@@ -68,6 +69,7 @@ export class JLinkBackend extends ProbeBackend {
   private config: JLinkConfig;
   private processManager: ProcessManager;
   private gdbOutputBuffer: string[] = [];
+  private deviceProfile: DeviceProfile;
 
   constructor(config: Partial<JLinkConfig>, processManager: ProcessManager) {
     super();
@@ -82,6 +84,33 @@ export class JLinkBackend extends ProbeBackend {
       rttTelnetPort: config.rttTelnetPort || 19021,
       swoTelnetPort: config.swoTelnetPort || 2332,
     };
+    this.deviceProfile = resolveDeviceProfile(this.config.device);
+    this.logProfile("init");
+  }
+
+  /** Announce which profile is active so it shows up in the user's next repro log. */
+  private logProfile(phase: string): void {
+    if (this.deviceProfile.id === "default") {
+      log(`[J-Link] Device profile (${phase}): default (no per-device overrides)`);
+      return;
+    }
+    log(
+      `[J-Link] Device profile (${phase}): ${this.deviceProfile.id}` +
+        (this.deviceProfile.notes ? ` — ${this.deviceProfile.notes}` : "")
+    );
+    // Report once — up-front — which post-attach ops the Commander
+    // channel can't express (read-modify-write bit sets). Without this,
+    // users would only discover the gap when the register bits they
+    // expected to be set silently aren't.
+    if (this.deviceProfile.postAttachOps) {
+      const emitted = emitJLinkCommands(this.deviceProfile.postAttachOps);
+      for (const s of emitted.skipped) {
+        log(
+          `[J-Link] Post-attach op${s.op.label ? ` (${s.op.label})` : ""} skipped on ` +
+            `Commander channel — needs a GDB session for read-modify-write.`
+        );
+      }
+    }
   }
 
   private get jlinkExe(): string {
@@ -97,9 +126,14 @@ export class JLinkBackend extends ProbeBackend {
   /**
    * Raw JLinkExe execution. Does NOT include preflight/locking.
    * Use the public methods (which call withPreflight) instead.
+   *
+   * The device profile (see `probe/device-profiles.ts`) can override the
+   * initial SWD clock and prepend one-shot setup commands after attach.
+   * This keeps target-family quirks (STM32 low-power DBGMCU writes, etc.)
+   * out of the generic backend.
    */
   private async execRaw(commands: string[], speedOverride?: number): Promise<CommandResult> {
-    const speed = speedOverride ?? this.config.speed;
+    const speed = speedOverride ?? this.deviceProfile.speedKhz ?? this.config.speed;
     const args = [
       "-device", this.config.device,
       "-if", this.config.interface,
@@ -112,7 +146,20 @@ export class JLinkBackend extends ProbeBackend {
       args.push("-SelectEmuBySN", this.config.serialNumber);
     }
 
-    log(`[J-Link] ${commands.join("; ")}${speedOverride ? ` (speed=${speed})` : ""}`);
+    // Prepend the profile's post-attach ops for the Commander channel.
+    // Ops the channel can't express (read-modify-write bit sets) are
+    // reported once at profile resolution — see `logProfile`.
+    const emitted = this.deviceProfile.postAttachOps
+      ? emitJLinkCommands(this.deviceProfile.postAttachOps)
+      : { commands: [], skipped: [] };
+    const script = [...emitted.commands, ...commands];
+    const speedNote =
+      speedOverride !== undefined
+        ? ` (speed=${speed}, override)`
+        : this.deviceProfile.speedKhz !== undefined
+        ? ` (speed=${speed}, profile=${this.deviceProfile.id})`
+        : "";
+    log(`[J-Link] ${script.join("; ")}${speedNote}`);
 
     return new Promise<CommandResult>((resolve) => {
       const proc = spawn(this.jlinkExe, args, { stdio: ["pipe", "pipe", "pipe"] });
@@ -121,7 +168,7 @@ export class JLinkBackend extends ProbeBackend {
       proc.stdout?.on("data", (d: Buffer) => { stdout += d.toString(); });
       proc.stderr?.on("data", (d: Buffer) => { stderr += d.toString(); });
 
-      proc.stdin?.write(commands.concat(["exit"]).join("\n") + "\n");
+      proc.stdin?.write(script.concat(["exit"]).join("\n") + "\n");
       proc.stdin?.end();
 
       proc.on("error", (err) => {
@@ -276,10 +323,19 @@ export class JLinkBackend extends ProbeBackend {
       return { success: true, message: "GDB Server is already running" };
     }
 
+    // Apply the device profile's preferred SWD clock. Without this, GDB
+    // Server runs at the raw config default (4 MHz) and JLinkGDBServer's
+    // InitTarget() fails on STM32L0 with "returned error code -1" because
+    // the L0's DPv0 handshake is unreliable at that speed.
+    const speed = this.deviceProfile.speedKhz ?? this.config.speed;
+    if (this.deviceProfile.speedKhz !== undefined) {
+      log(`[J-Link] GDB Server speed: ${speed} kHz (profile=${this.deviceProfile.id})`);
+    }
+
     const args = [
       "-device", this.config.device,
       "-if", this.config.interface,
-      "-speed", String(this.config.speed),
+      "-speed", String(speed),
       "-port", String(this.config.gdbPort),
       "-RTTTelnetPort", String(this.config.rttTelnetPort),
       "-SWOPort", String(this.config.swoTelnetPort),
@@ -337,6 +393,8 @@ export class JLinkBackend extends ProbeBackend {
   setDevice(device: string): void {
     log(`[J-Link] Device set to: ${device}`);
     this.config.device = device;
+    this.deviceProfile = resolveDeviceProfile(device);
+    this.logProfile("setDevice");
   }
 
   async listDevices(): Promise<CommandResult> {
