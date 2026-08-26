@@ -36,12 +36,23 @@ export function golden(name: string): string {
  */
 export class FakeGdbBridge implements GdbBridge {
   readonly sent: string[] = [];
+  /** Records out-of-band interrupts separately from stdin commands. */
+  interruptCount = 0;
+  /** When false, interrupt() reports failure so halt() takes its fallback. */
+  interruptSucceeds = true;
   private connected: boolean;
   private replies: Record<string, string>;
 
   constructor(replies: Record<string, string> = {}, connected = true) {
     this.replies = replies;
     this.connected = connected;
+  }
+
+  async interrupt(): Promise<{ success: boolean; output: string; error?: string }> {
+    this.interruptCount++;
+    return this.interruptSucceeds
+      ? { success: true, output: "Target stopped: interrupted" }
+      : { success: false, output: "", error: "did not stop" };
   }
 
   setConnected(v: boolean): void { this.connected = v; }

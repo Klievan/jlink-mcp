@@ -28,21 +28,22 @@ describe("GDB routing — command mapping", () => {
     backend = makeBackend(bridge);
   });
 
-  test("halt interrupts through GDB so its state view stays consistent", async () => {
-    // `monitor halt` stops the CPU behind GDB's back — the core halts but GDB
-    // still thinks it is running, and later queries block until they time
-    // out. Observed on hardware as read_registers returning nothing through
-    // an otherwise healthy session.
+  test("halt interrupts out-of-band, not through the command channel", async () => {
+    // With a synchronous remote GDB stops reading stdin while the target
+    // runs, so a halt sent as a command is never seen and merely times out.
+    // Confirmed on hardware: after one `continue` the GDB server logged
+    // nothing further and every later command sat for the full timeout.
     await backend.halt();
-    assert.equal(bridge.sent[0], "interrupt");
+    assert.equal(bridge.interruptCount, 1, "halt must use the out-of-band path");
+    assert.deepEqual(bridge.sent, [], "nothing should be written to stdin");
   });
 
-  test("halt falls back to monitor halt when interrupt is refused", async () => {
-    // Nothing to interrupt when the target is already stopped.
-    const b = new FakeGdbBridge({ interrupt: "The program is not being run." });
-    const be = makeBackend(b);
-    await be.halt();
-    assert.deepEqual(b.sent, ["interrupt", "monitor halt"]);
+  test("halt falls back to monitor halt when the interrupt does not take", async () => {
+    const b = new FakeGdbBridge();
+    b.interruptSucceeds = false;
+    await makeBackend(b).halt();
+    assert.equal(b.interruptCount, 1);
+    assert.deepEqual(b.sent, ["monitor halt"]);
   });
 
   test("resume continues the target", async () => {
@@ -191,13 +192,13 @@ describe("GDB routing — JLINK_MCP_GDB_ROUTING opt-out", () => {
     process.env.JLINK_MCP_GDB_ROUTING = "1";
     const bridge = new FakeGdbBridge();
     await makeBackend(bridge).halt();
-    assert.deepEqual(bridge.sent, ["interrupt"]);
+    assert.equal(bridge.interruptCount, 1);
   });
 
   test("unset leaves routing enabled", async () => {
     delete process.env.JLINK_MCP_GDB_ROUTING;
     const bridge = new FakeGdbBridge();
     await makeBackend(bridge).halt();
-    assert.deepEqual(bridge.sent, ["interrupt"]);
+    assert.equal(bridge.interruptCount, 1);
   });
 });

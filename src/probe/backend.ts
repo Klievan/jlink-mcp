@@ -85,6 +85,20 @@ export interface GdbBridge {
     error?: string;
     stopReason?: string;
   }>;
+  /**
+   * Stop a running target out-of-band.
+   *
+   * Separate from `command` because it cannot go through the command channel:
+   * with a synchronous remote, GDB blocks while the target runs and stops
+   * reading stdin entirely, so a halt typed as a command is never seen.
+   * Optional so alternative bridges need not implement it.
+   */
+  interrupt?(timeout?: number): Promise<{
+    success: boolean;
+    output: string;
+    error?: string;
+    stopReason?: string;
+  }>;
 }
 
 /**
