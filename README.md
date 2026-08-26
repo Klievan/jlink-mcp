@@ -457,6 +457,8 @@ It has caught bugs that had been shipping green, including:
   regardless — the fix above is what made this one visible
 - a GDB server reported **running when it had already exited**, because startup
   returned on the spawn without waiting to see whether it got the probe
+- **RTT going silent after a reset** — the target was still logging and the
+  probe had stopped collecting, which reads exactly like a quiet device
 
 Every one of those reported success. That is the point of the hardware tier,
 and the reason the suites assert on parsed content rather than on the call
