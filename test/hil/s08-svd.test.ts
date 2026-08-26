@@ -105,7 +105,11 @@ describe("S8 — SVD peripheral decoding against hardware", { skip }, () => {
     try {
       const out = await bare.call("list_peripherals", {});
       assert.match(out, /svdPath|SVD_PATH/i, `should name the setting: ${out}`);
-      assert.doesNotMatch(out, /target|unreachable/i, "must not blame the hardware");
+      // Check for blame, not for the word "target" — the help text says
+      // "an SVD file for your target", which is a perfectly good sentence that
+      // an earlier version of this assertion flagged as blaming the hardware.
+      assert.doesNotMatch(out, /unreachable|not responding|check .*(wiring|SWD)/i,
+        `reports a configuration problem as a device fault: ${out}`);
     } finally {
       await bare.stop();
     }
