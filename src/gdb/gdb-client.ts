@@ -236,6 +236,11 @@ export class GDBClient {
     // timeout returns empty output, which reads like a healthy quiet target
     // rather than "you need to halt first".
     if (this.targetRunning) {
+      // Log the refusal. A command that never reaches GDB is also never
+      // logged by sendCommand, so a whole refused sequence leaves no trace at
+      // all — which cost a hardware round: a reset path appeared not to run
+      // when it had run and been refused silently.
+      log(`[GDB] > (refused, target running) ${cmd}`);
       return {
         success: false,
         output: "",

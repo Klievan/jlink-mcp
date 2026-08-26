@@ -372,8 +372,31 @@ export class JLinkBackend extends ProbeBackend {
         error: go.error,
       };
     }
-    // Reset doesn't need preflight — it IS the recovery action
-    return this.acquireLock(() => this.execRaw(halt ? ["r", "halt"] : ["r", "go"]));
+    // Reset doesn't need preflight — it IS the recovery action.
+    //
+    // `r` followed by `halt` does not stop at the reset vector: the core
+    // starts running the moment reset releases, and by the time `halt` lands
+    // it has executed an arbitrary amount of startup. Measured on an
+    // nRF52840 — reset(halt) left PC mid-firmware, and JLinkExe and GDB
+    // agreed on the address, so this was the core genuinely running rather
+    // than a stale register cache.
+    //
+    // Vector catch is how you stop it before it starts: DEMCR.VC_CORERESET
+    // (bit 0) halts the CPU on reset. Set it, reset, clear it — cleared
+    // because leaving a debug trap armed for the next session is a bug this
+    // project has already shipped once.
+    //
+    // TRCENA (bit 24) is preserved: J-Link sets it, and clearing it turns off
+    // the trace/debug block that DWT and the ITM depend on.
+    if (halt) {
+      return this.acquireLock(() => this.execRaw([
+        "w4 0xE000EDFC, 0x01000001",
+        "r",
+        "halt",
+        "w4 0xE000EDFC, 0x01000000",
+      ]));
+    }
+    return this.acquireLock(() => this.execRaw(["r", "go"]));
   }
   async step(): Promise<CommandResult> {
     if (this.useGdb()) return this.runViaGdb("stepi", 5000);
