@@ -228,39 +228,162 @@ export class JLinkBackend extends ProbeBackend {
   // ── ProbeBackend implementation ──────────────────────────────────
   // All target-touching methods go through withPreflight for
   // automatic validation, locking, and recovery.
+  //
+  // Routing note: when a GDB session is connected, the J-Link probe can
+  // only serve one client. Spawning JLinkExe alongside a running
+  // JLinkGDBServer forces the server's session shut, which is what
+  // caused `halt`/`readMemory`/etc. to leave the GDB client seeing a
+  // dead remote. So CPU-control and read paths prefer the GDB bridge
+  // when it is available; JLinkExe is used only when no GDB session is
+  // up (or for operations GDB can't perform, like `mem` before a
+  // session exists). Set `JLINK_MCP_GDB_ROUTING=0` to force the legacy
+  // JLinkExe path unconditionally.
+
+  /** True when we should prefer the GDB bridge over spawning JLinkExe. */
+  private useGdb(): boolean {
+    const optOut = process.env.JLINK_MCP_GDB_ROUTING;
+    if (optOut === "0" || optOut?.toLowerCase() === "false") return false;
+    return !!this.gdbBridge?.isConnected();
+  }
+
+  /**
+   * Translate a caller-supplied register name into what GDB accepts.
+   *
+   * The `read_register` tool documents J-Link-style names ('PC', 'SP',
+   * 'R0'), but GDB's register names are lowercase and case-sensitive —
+   * `info registers PC` fails with "Invalid register `PC'". Strip an
+   * optional `$` sigil, lowercase, and map the J-Link-only spellings
+   * that have a GDB equivalent.
+   */
+  private static toGdbRegName(name: string): string {
+    const n = name.trim().replace(/^\$/, "").toLowerCase();
+    const aliases: Record<string, string> = {
+      "sp(r13)": "sp",
+      "lr(r14)": "lr",
+      "pc(r15)": "pc",
+      r13: "sp",
+      r14: "lr",
+      r15: "pc",
+      psr: "xpsr",
+      apsr: "xpsr",
+      epsr: "xpsr",
+      ipsr: "xpsr",
+    };
+    return aliases[n] ?? n;
+  }
+
+  /** Wrap a GDB command result in the shared `CommandResult` shape. */
+  private async runViaGdb(cmd: string, timeoutMs: number = 10000): Promise<CommandResult> {
+    const r = await this.gdbBridge!.command(cmd, timeoutMs);
+    return {
+      success: r.success,
+      rawOutput: r.output,
+      output: r.output,
+      error: r.error,
+    };
+  }
 
   async getDeviceInfo(): Promise<CommandResult> {
+    if (this.useGdb()) return this.runViaGdb("info registers");
     return this.withPreflight("getDeviceInfo", () => this.execRaw(["halt", "regs"]));
   }
   async halt(): Promise<CommandResult> {
+    if (this.useGdb()) return this.runViaGdb("monitor halt", 5000);
     return this.withPreflight("halt", () => this.execRaw(["halt"]));
   }
   async resume(): Promise<CommandResult> {
+    if (this.useGdb()) {
+      // Kick the target running but don't block waiting for a stop event
+      // — resume is fire-and-forget. Short timeout so callers see prompt
+      // return.
+      return this.runViaGdb("continue", 500);
+    }
     return this.withPreflight("resume", () => this.execRaw(["go"]));
   }
   async reset(halt = false): Promise<CommandResult> {
+    if (this.useGdb()) {
+      // `monitor reset` on J-Link halts by default; add an explicit
+      // `monitor go` to resume when the caller asked for run-after-reset.
+      //
+      // These MUST be two separate `command()` calls. GDBClient writes the
+      // string straight to stdin and resolves on the first `^done`/`(gdb)`,
+      // so a "cmd\ncmd" string leaves the second response orphaned in the
+      // shared output buffer, where it can satisfy the *next* command's
+      // completion check and desync every reply after it.
+      const reset = await this.runViaGdb("monitor reset", 5000);
+      if (halt || !reset.success) return reset;
+      const go = await this.runViaGdb("monitor go", 5000);
+      return {
+        success: go.success,
+        rawOutput: [reset.rawOutput, go.rawOutput].filter(Boolean).join("\n"),
+        output: [reset.output, go.output].filter(Boolean).join("\n"),
+        error: go.error,
+      };
+    }
     // Reset doesn't need preflight — it IS the recovery action
     return this.acquireLock(() => this.execRaw(halt ? ["r", "halt"] : ["r", "go"]));
   }
   async step(): Promise<CommandResult> {
+    if (this.useGdb()) return this.runViaGdb("stepi", 5000);
     return this.withPreflight("step", () => this.execRaw(["halt", "s"]));
   }
 
   async readMemory(address: number, length: number): Promise<CommandResult> {
+    if (this.useGdb()) return this.readMemoryViaGdb(address, length);
     // Skip preflight when reading DHCSR (that IS the preflight)
     const isDHCSR = address === 0xE000EDF0;
     if (isDHCSR) return this.acquireLock(() => this.execRaw([`mem 0x${address.toString(16)}, ${length}`]));
     return this.withPreflight("readMemory", () => this.execRaw([`mem 0x${address.toString(16)}, ${length}`]));
   }
   async writeMemory(address: number, value: number): Promise<CommandResult> {
+    if (this.useGdb()) {
+      return this.runViaGdb(`set {unsigned int}0x${address.toString(16)} = 0x${value.toString(16)}`, 5000);
+    }
     return this.withPreflight("writeMemory", () => this.execRaw([`w4 0x${address.toString(16)}, 0x${value.toString(16)}`]));
   }
 
   async readAllRegisters(): Promise<CommandResult> {
+    if (this.useGdb()) return this.runViaGdb("info all-registers", 5000);
     return this.withPreflight("readAllRegisters", () => this.execRaw(["halt", "regs"]));
   }
   async readRegister(name: string): Promise<CommandResult> {
+    if (this.useGdb()) return this.runViaGdb(`info registers ${JLinkBackend.toGdbRegName(name)}`, 5000);
     return this.withPreflight("readRegister", () => this.execRaw(["halt", `rreg ${name}`]));
+  }
+
+  /**
+   * Read memory over the GDB session and normalize the output to the
+   * J-Link Commander format (`ADDR = XX XX ...  ASCII`) so downstream
+   * consumers like `readFaultRegisters` / `parseMemoryDump` don't need to
+   * care which channel served the read.
+   */
+  private async readMemoryViaGdb(address: number, length: number): Promise<CommandResult> {
+    const raw = await this.gdbBridge!.command(`x/${length}bx 0x${address.toString(16)}`, 5000);
+    const normalized = raw.output
+      .split("\n")
+      .map((line) => {
+        const m = line.match(/^\s*0x([0-9a-fA-F]+)\s*(?:<[^>]*>)?\s*:\s*(.+)$/);
+        if (!m) return line;
+        const addr = m[1].toUpperCase().padStart(8, "0");
+        const bytes = m[2]
+          .trim()
+          .split(/\s+/)
+          .map((b) => b.replace(/^0x/, "").padStart(2, "0"));
+        const ascii = bytes
+          .map((h) => {
+            const c = parseInt(h, 16);
+            return c >= 0x20 && c < 0x7f ? String.fromCharCode(c) : ".";
+          })
+          .join("");
+        return `${addr} = ${bytes.join(" ")}  ${ascii}`;
+      })
+      .join("\n");
+    return {
+      success: raw.success,
+      rawOutput: normalized,
+      output: normalized,
+      error: raw.error,
+    };
   }
 
   async flash(filePath: string, baseAddress?: number): Promise<CommandResult> {

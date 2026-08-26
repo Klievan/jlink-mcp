@@ -176,6 +176,15 @@ export class GDBClient {
     // Detect if this is a "run" command that will make the target execute
     const isRunCommand = /^(continue|c|step|s|stepi|si|next|n|nexti|ni|finish|until|advance|run|r)\b/i.test(cmd.trim());
 
+    // NOTE on `interrupt`: in mi2 without async-exec the CLI `interrupt`
+    // and MI `-exec-interrupt` are both effectively no-ops (`-exec-interrupt`
+    // requires async mode). Callers who need to stop a running target
+    // through this MCP should use the `halt` tool or send
+    // `monitor halt` — both go through the JLinkGDBServer monitor
+    // command channel, which bypasses GDB's execution state machine.
+    // Enabling `mi-async` at connect time to make interrupt work
+    // natively is deferred to a follow-up (it interacts with the
+    // response-detection state machine and needs care).
     this.stopEvent = null;
     const rawOutput = await this.sendCommand(cmd, isRunCommand ? timeout : 10000);
     const output = this.cleanMI(rawOutput);

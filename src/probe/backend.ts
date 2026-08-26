@@ -69,6 +69,25 @@ export interface ProbeStatus {
 export type ProbeType = "jlink" | "openocd" | "blackmagic" | "probe-rs";
 
 /**
+ * Minimal surface a backend needs to route CPU-control and read commands
+ * through a running GDB session instead of spawning its own probe-CLI
+ * process. Implemented by `GDBClient`; injected by the MCP server via
+ * `ProbeBackend.setGdbBridge()`.
+ *
+ * Kept intentionally small so backends don't depend on the concrete
+ * GDB client class.
+ */
+export interface GdbBridge {
+  isConnected(): boolean;
+  command(cmd: string, timeout?: number): Promise<{
+    success: boolean;
+    output: string;
+    error?: string;
+    stopReason?: string;
+  }>;
+}
+
+/**
  * Abstract base for all debug probe backends.
  * Implementations only need to override the abstract methods.
  * Shared utilities (register parsing, fault decoding, memory parsing)
@@ -83,6 +102,14 @@ export abstract class ProbeBackend {
   protected _state: ProbeState = ProbeState.DISCONNECTED;
   private _rttConnected = false;
   private _lock: Promise<void> = Promise.resolve();
+  /**
+   * Optional GDB session the backend can route commands through. Injected
+   * by the MCP server after both objects are constructed. When present
+   * and connected, backends should prefer this over spawning a competing
+   * probe-CLI process, since the underlying probe can only serve one
+   * session at a time.
+   */
+  protected gdbBridge?: GdbBridge;
 
   get state(): ProbeState { return this._state; }
 
@@ -214,6 +241,11 @@ export abstract class ProbeBackend {
     return false;
   }
 
+  /** Inject a GDB session for command routing. See {@link GdbBridge}. */
+  setGdbBridge(bridge: GdbBridge | undefined): void {
+    this.gdbBridge = bridge;
+  }
+
   // ── Device control ───────────────────────────────────────────────
 
   abstract getDeviceInfo(): Promise<CommandResult>;
@@ -284,7 +316,19 @@ export abstract class ProbeBackend {
   // SHARED UTILITIES (used by all backends)
   // ══════════════════════════════════════════════════════════════════
 
-  /** Parse register dump text into structured key-value pairs */
+  /**
+   * Parse register dump text into structured key-value pairs.
+   *
+   * Handles two wire formats:
+   *  - J-Link Commander `regs`: `NAME = VALUE`, several per line.
+   *  - GDB `info registers` / `info all-registers`: whitespace columns,
+   *    `name  0xhex  decimal`, one per line, lowercase names.
+   *
+   * Both normalize to uppercase names and `0x`-prefixed, 8-digit
+   * zero-padded values, so downstream consumers (`formatRegistersCompact`,
+   * `diagnose_crash`'s `!== "0x00000000"` checks) behave identically
+   * regardless of which channel served the read.
+   */
   parseRegisters(raw: string): Record<string, string> | null {
     const regs: Record<string, string> = {};
 
@@ -297,18 +341,40 @@ export abstract class ProbeBackend {
       // "SP(R13)= 20062880"
       const simple = /(\w[\w()]*)\s*=\s*([0-9A-Fa-f]{2,8})/g;
       let match;
+      let matchedSimple = false;
       while ((match = simple.exec(trimmed)) !== null) {
+        matchedSimple = true;
         let name = match[1];
         const value = match[2];
         // Normalize SP(R13) → SP
         const parenMatch = name.match(/^(\w+)\(\w+\)$/);
         if (parenMatch) name = parenMatch[1];
-        regs[name] = `0x${value}`;
+        regs[name] = `0x${value.padStart(8, "0")}`;
+      }
+
+      // GDB columns: "r0    0x20060050    537130576"
+      //              "pc    0xbf54        0xbf54 <main+20>"
+      // Only considered when the `=` form didn't match, so J-Link output
+      // can never fall through into this branch.
+      if (!matchedSimple) {
+        const gdbMatch = trimmed.match(/^([a-zA-Z][a-zA-Z0-9_]*)\s+0x([0-9a-fA-F]+)(?:\s|$)/);
+        if (gdbMatch) {
+          regs[gdbMatch[1].toUpperCase()] = `0x${gdbMatch[2].toUpperCase().padStart(8, "0")}`;
+        }
       }
 
       // "XPSR = 41000000: APSR = nZcvq, ..."
       const xpsrMatch = trimmed.match(/APSR\s*=\s*(\w+)/);
       if (xpsrMatch) regs["APSR"] = xpsrMatch[1];
+    }
+
+    // GDB reports the combined XPSR but not the IPSR field that
+    // `diagnose_crash` uses to detect "we're inside an exception handler".
+    // Derive it from XPSR bits [8:0], formatted the same 3-digit way
+    // J-Link prints it so the existing comparisons keep working.
+    if (regs["XPSR"] && !regs["IPSR"]) {
+      const xpsr = parseInt(regs["XPSR"], 16);
+      if (!isNaN(xpsr)) regs["IPSR"] = `0x${(xpsr & 0x1ff).toString(16).toUpperCase().padStart(3, "0")}`;
     }
 
     return Object.keys(regs).length > 0 ? regs : null;
