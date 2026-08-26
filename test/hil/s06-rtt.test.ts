@@ -254,42 +254,39 @@ describe("S6 — RTT logging and the down channel", { skip }, () => {
     // handler. Watching the sequence counter conflates "did not reset" with
     // "reset but the stream we read predates it", which is what made the
     // previous version of this check ambiguous.
-    // Disconnect RTT before asking the core to stay put.
+    // Check the reset by what the target shows, not by catching the PC at the
+    // reset vector.
     //
-    // J-Link collects RTT in stop mode by default (SetAllowStopMode is
-    // enabled): it halts the core, reads the buffer, and starts it again.
-    // Measured here — after `monitor reset` the server logged "Starting target
-    // CPU..." with no resume of ours in between, and the PC was off in main by
-    // the time we read it, differing between the GDB and JLinkExe channels
-    // because the core was moving between the two reads.
-    //
-    // So "halted at the reset vector" and "RTT is being collected" are not
-    // simultaneously satisfiable, and asserting both was asserting a
-    // contradiction. That is a fact about the probe, not a bug in the server.
+    // Catching the PC cannot work here. J-Link collects RTT in stop mode by
+    // default (SetAllowStopMode): it halts the core, reads the buffer, and
+    // starts it again. After `monitor reset` the server logged "Starting
+    // target CPU..." with no resume of ours in between, and the PC read back
+    // from inside main — differing between the GDB and JLinkExe channels,
+    // because the core was moving between the two reads. Disconnecting our
+    // telnet client does not stop it either; the collector belongs to J-Link.
     //
     //   https://kb.segger.com/J-Link_Command_Strings
-    await hil.expectOk("rtt_disconnect");
+    //
+    // The fixture's counters are a better witness anyway: they live in RAM,
+    // start at zero, and only climb. Seeing them fall proves the firmware
+    // started over, which is the thing being asserted — and it holds whatever
+    // the PC happens to be doing at the moment we look.
+    const counter = async () =>
+      word32(await withTargetHalted(hil, () =>
+        hil.expectOk("read_memory", { address: hex(sym("test_counter")), length: 4 })))!;
+
+    const before = await counter();
+    assert.ok(before > 0, `counter should have been climbing before the reset, got ${before}`);
+
     await hil.expectOk("reset", { halt: true });
-    const regs = await withTargetHalted(hil, () => hil.expectOk("read_registers"));
-    record("hil-reset-halt-registers.txt", regs);
+    const after = await counter();
+    record("hil-reset-counter.txt", `test_counter: ${before} -> ${after}`);
+    assert.ok(after < before,
+      `test_counter went ${before} -> ${after}: it did not restart, so the reset did not take. ` +
+      `The counter only ever climbs while the firmware runs, so a lower value is the firmware ` +
+      `having started again.`);
 
-    // Cross-check through the other channel. `monitor reset` reports success
-    // ("Resetting target", ^done) yet PC comes back mid-firmware, which has
-    // two very different explanations: the core did not reset, or it did and
-    // GDB handed us cached registers from before it. Reading the same thing
-    // with GDB routing disabled distinguishes them — JLinkExe has no cache.
-    const viaJLinkExe = await hil.call("probe_command", { commands: ["halt", "regs"] });
-    record("hil-reset-halt-via-jlinkexe.txt", viaJLinkExe);
-    const rawPc = viaJLinkExe.match(/\bPC = ([0-9A-Fa-f]{8})/)?.[1];
-
-    const pc = reg(regs, "PC");
-    assert.ok(pc !== null && pc >= sym("Reset_Handler") && pc <= sym("Reset_Handler") + 0x20,
-      `after reset(halt) PC is 0x${pc?.toString(16)}, not the reset handler at ` +
-      `0x${sym("Reset_Handler").toString(16)}. JLinkExe reports PC=0x${rawPc ?? "?"} for the same ` +
-      `moment — if that IS the reset handler, the core reset fine and GDB served a stale ` +
-      `register cache; if it agrees, the reset genuinely did not take.`);
     await hil.expectOk("resume");
-    await hil.expectOk("rtt_connect");
 
     // And the server should still be up to have served it.
     assert.match(await hil.expectOk("gdb_server_status"), /"running": true/);

@@ -892,13 +892,19 @@ export class JLinkMcpServer {
    * client had produced an actionable one.
    */
   private static resultText(
-    r: { output?: string; rawOutput?: string; error?: string; suggestedAction?: string },
+    r: { success?: boolean; output?: string; rawOutput?: string; error?: string; suggestedAction?: string },
     fallback: string
   ): string {
+    // For a failure the reason outranks the output. A failing reset carried a
+    // careful explanation in `error` and the raw text `@"Resetting target"` in
+    // `rawOutput` — and reporting the output meant the reply said the target
+    // had been reset while the result said it had not.
+    const reason = [r.error, r.suggestedAction].filter((x) => x && x.trim()).join(" ");
+    if (r.success === false && reason) return reason;
+
     if (r.output?.trim()) return r.output;
     if (r.rawOutput?.trim()) return r.rawOutput;
-    const parts = [r.error, r.suggestedAction].filter((x) => x && x.trim());
-    if (parts.length) return parts.join(" ");
+    if (reason) return reason;
     return fallback;
   }
 

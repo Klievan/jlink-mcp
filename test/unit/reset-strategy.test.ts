@@ -154,3 +154,25 @@ describe("restarting RTT collection after a reset", () => {
     assert.equal(scripts.length, 0, "nothing to send without an address");
   });
 });
+
+describe("verification that cannot run", () => {
+  // An unverifiable reset is not a failed one. Getting this backwards failed
+  // a reset that had actually worked — the same lie this check exists to
+  // catch, pointed the other way.
+  test("skips the check while RTT is being collected", async () => {
+    // J-Link collects RTT in stop mode by default: it halts the core, reads
+    // the buffer, and starts it again. So the PC cannot be pinned to the
+    // reset vector, however well the reset went.
+    const b = new JLinkBackend({ device: "NRF52840_XXAA" }, new ProcessManager());
+    // rttConnected only takes while the GDB server is up — RTT is served by it.
+    (b as any).setState(require("../../src/probe/backend").ProbeState.GDB_RUNNING);
+    b.rttConnected = true;
+    assert.equal(b.rttConnected, true, "precondition");
+    const reads: number[] = [];
+    (b as any).execRaw = async () => ({ success: true, rawOutput: "", output: "" });
+    (b as any).readMemory = async (a: number) => { reads.push(a); return { success: false, rawOutput: "", output: "" }; };
+
+    assert.equal((await b.reset(true)).success, true);
+    assert.deepEqual(reads, [], "should not even attempt the read");
+  });
+});
