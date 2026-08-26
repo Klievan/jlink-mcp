@@ -23,7 +23,28 @@ export class GDBClient {
   private gdbPath: string;
   private connected = false;
   private outputBuffer = "";
-  private pendingResolve: ((response: string) => void) | null = null;
+  /**
+   * The command currently awaiting its MI result record.
+   *
+   * GDB/MI echoes the token you prefix a command with on that command's
+   * result record (`11 info registers` -> `11^error,msg="..."`), which is the
+   * only reliable way to tell one command's response from another's. Matching
+   * on a bare `(gdb)` prompt or any `^done` does not work: GDB prints a prompt
+   * during startup, before a single command has been sent, so the first
+   * command resolves against that stale prompt with an empty buffer and every
+   * subsequent reply is off by one.
+   *
+   * Observed on hardware as every GDB-routed tool returning empty output while
+   * the server reported itself healthy.
+   */
+  private pending: {
+    token: number;
+    resolve: (response: string) => void;
+    /** Run commands resolve on `*stopped`, not on `^running`. */
+    waitForStop: boolean;
+    sawResult: boolean;
+  } | null = null;
+  private tokenCounter = 0;
   private stopEvent: string | null = null;
   private history: string[] = [];
   private maxHistory = 200;
@@ -186,7 +207,7 @@ export class GDBClient {
     // natively is deferred to a follow-up (it interacts with the
     // response-detection state machine and needs care).
     this.stopEvent = null;
-    const rawOutput = await this.sendCommand(cmd, isRunCommand ? timeout : 10000);
+    const rawOutput = await this.sendCommand(cmd, isRunCommand ? timeout : 10000, isRunCommand);
     const output = this.cleanMI(rawOutput);
 
     // Watch for signals that the remote died mid-session. GDB itself is
@@ -307,7 +328,7 @@ export class GDBClient {
     }
     this.connected = false;
     this.outputBuffer = "";
-    this.pendingResolve = null;
+    this.pending = null;
     this.stopEvent = null;
   }
 
@@ -326,21 +347,32 @@ export class GDBClient {
       log(`[GDB] Stop event: ${this.stopEvent}`);
     }
 
-    // If someone is waiting for a response, check if we have a prompt
-    if (this.pendingResolve && this.isResponseComplete()) {
-      const resolve = this.pendingResolve;
-      this.pendingResolve = null;
-      const response = this.outputBuffer;
-      this.outputBuffer = "";
-      resolve(response);
+    const p = this.pending;
+    if (!p) return;
+
+    // Resolve only on THIS command's result record, identified by the token
+    // we prefixed it with. Anything else in the buffer — startup banners,
+    // stray prompts, async notifications — is not an answer to our question.
+    if (!p.sawResult && new RegExp(`^${p.token}\\^(done|error|running|exit|connected)`, "m").test(this.outputBuffer)) {
+      p.sawResult = true;
+      const running = new RegExp(`^${p.token}\\^running`, "m").test(this.outputBuffer);
+      // A run command's `^running` means "started", not "finished". Keep
+      // waiting for the *stopped notification so callers of step/continue see
+      // the target's actual resting state rather than racing it.
+      if (!(p.waitForStop && running)) return this.settlePending();
     }
+
+    if (p.sawResult && p.waitForStop && this.stopEvent) this.settlePending();
   }
 
-  private isResponseComplete(): boolean {
-    // GDB/MI: response is complete when we see (gdb) prompt
-    // or a result record (^done, ^error, ^running, ^exit)
-    return this.outputBuffer.includes("(gdb)") ||
-           /\^(done|error|running|exit)/.test(this.outputBuffer);
+  /** Hand the accumulated buffer to whoever is waiting and clear the slot. */
+  private settlePending(): void {
+    const p = this.pending;
+    if (!p) return;
+    this.pending = null;
+    const response = this.outputBuffer;
+    this.outputBuffer = "";
+    p.resolve(response);
   }
 
   private formatStopReason(miOutput: string): string {
@@ -364,27 +396,30 @@ export class GDBClient {
     return parts.join(" ");
   }
 
-  private sendCommand(cmd: string, timeout: number): Promise<string> {
+  private sendCommand(cmd: string, timeout: number, waitForStop = false): Promise<string> {
     return new Promise((resolve, reject) => {
       if (!this.proc?.stdin) {
         reject("GDB process not available");
         return;
       }
 
+      const token = ++this.tokenCounter;
       this.outputBuffer = "";
-      this.pendingResolve = resolve;
+      this.pending = { token, resolve, waitForStop, sawResult: false };
 
       // Record in history
       this.history.push(`> ${cmd}`);
       if (this.history.length > this.maxHistory) this.history.shift();
 
-      log(`[GDB] > ${cmd}`);
-      this.proc.stdin.write(cmd + "\n");
+      log(`[GDB] > ${token} ${cmd}`);
+      // MI accepts `<token> <cli command>` and echoes the token on the
+      // matching result record. Verified against arm-none-eabi-gdb.
+      this.proc.stdin.write(`${token} ${cmd}\n`);
 
       // Timeout
       setTimeout(() => {
-        if (this.pendingResolve === resolve) {
-          this.pendingResolve = null;
+        if (this.pending?.token === token) {
+          this.pending = null;
           const partial = this.outputBuffer;
           this.outputBuffer = "";
           // Record partial output in history
@@ -395,10 +430,6 @@ export class GDBClient {
         }
       }, timeout);
     });
-  }
-
-  private waitForPrompt(timeout: number): Promise<string> {
-    return this.sendCommand("", timeout);
   }
 
   /** Clean GDB/MI output into human-readable text */
