@@ -149,11 +149,39 @@ describe("S2b — GDB session: halt, inspect, step are coherent", { skip }, () =
   });
 
   test("a resumed core executes again", async () => {
+    // Sample either side of the run window, not during it. The J-Link GDB
+    // Server is a synchronous remote: while the target executes, GDB is in
+    // its resume loop and memory cannot be read at all. Reading mid-run is
+    // not a slow path, it is an impossible one — the client refuses it
+    // outright, and an earlier version of this test asked for exactly that
+    // and read the refusal as "the core never restarted".
+    await hil.expectOk("halt");
+    const before = word32(await hil.expectOk("read_memory", { address: hex(FIXTURE.COUNTER_ADDR), length: 4 }));
+
     await hil.expectOk("resume");
-    const first = word32(await hil.expectOk("read_memory", { address: hex(FIXTURE.COUNTER_ADDR), length: 4 }));
     await sleep(300);
-    const second = word32(await hil.expectOk("read_memory", { address: hex(FIXTURE.COUNTER_ADDR), length: 4 }));
-    assert.notEqual(second, first, "counter frozen after resume — the core did not restart");
+    await hil.expectOk("halt");
+
+    const after = word32(await hil.expectOk("read_memory", { address: hex(FIXTURE.COUNTER_ADDR), length: 4 }));
+    assert.notEqual(before, null, "could not read the counter before resuming");
+    assert.notEqual(after, before, "counter unchanged across the run window — the core did not restart");
+  });
+
+  test("reading memory while the target runs is refused, not left to hang", async () => {
+    // The corollary, asserted directly: the caller gets an actionable answer
+    // rather than an empty response after a timeout. Empty output is
+    // indistinguishable from a healthy quiet target, which is what made this
+    // class of failure hard to diagnose in the first place.
+    await hil.expectOk("resume");
+    const started = Date.now();
+    const out = await hil.call("read_memory", { address: hex(FIXTURE.COUNTER_ADDR), length: 4 });
+    const elapsed = Date.now() - started;
+    record("hil-read-while-running.txt", out);
+
+    assert.ok(elapsed < 5000, `took ${elapsed}ms — should refuse promptly, not time out`);
+    assert.match(out, /running|halt/i, `unhelpful response while running: ${JSON.stringify(out)}`);
+
+    await hil.expectOk("halt");
   });
 
   test("halting a running core stops it inside the spin loop", async () => {
