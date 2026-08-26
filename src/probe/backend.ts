@@ -132,15 +132,24 @@ export abstract class ProbeBackend {
 
   get rttConnected(): boolean { return this._rttConnected; }
   set rttConnected(v: boolean) {
-    // RTT can only be connected if GDB server is running.
+    // RTT can only be connected if the GDB server is running — so ask that,
+    // rather than asking whether the state enum currently reads GDB_RUNNING.
     //
-    // This refusal is silent, and silence is why it is worth logging. The flag
-    // is what decides whether a flash restores RTT afterwards, so a discarded
-    // `= true` turns into "Restored: GDB server, GDB client." with RTT missing
-    // and nothing saying why — which is what S7 shows, three runs running,
-    // while two fixes aimed elsewhere changed nothing.
-    if (v && this._state !== ProbeState.GDB_RUNNING) {
-      log(`[probe] refusing rttConnected = true: state is ${this._state}, not ${ProbeState.GDB_RUNNING}`);
+    // The two are not the same. `state` is one enum covering both "is the
+    // target attached" and "is the server up", and any JLinkExe-routed call
+    // runs preflight, which sets TARGET_ATTACHED on success. That is true and
+    // says nothing about the server, but it knocked the enum off GDB_RUNNING
+    // and this setter then threw the assignment away:
+    //
+    //   [probe] refusing rttConnected = true: state is target_attached, not gdb_running
+    //
+    // connectRttToRunningTarget resumes before connecting, and with no GDB
+    // client attached that resume goes through JLinkExe — so the refusal
+    // landed on the line immediately after, every time. The flag stayed false,
+    // every later flash skipped restoring RTT, and the stream was silently
+    // gone for the rest of the session.
+    if (v && !this.isGDBServerRunning()) {
+      log("[probe] refusing rttConnected = true: no GDB server is running to serve RTT");
       this._rttConnected = false;
       return;
     }

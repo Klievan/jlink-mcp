@@ -461,6 +461,10 @@ It has caught bugs that had been shipping green, including:
   and the probe had stopped collecting, which reads exactly like a quiet
   device. Caught by reading the control block from both ends: 490 bytes
   written by the firmware, none collected
+- an **assignment that was silently discarded**, taking RTT out for the rest of
+  the session — the flag guarding it asked whether a state enum read
+  `GDB_RUNNING`, when the question it meant to ask was whether the GDB server
+  was running
 
 Every one of those reported success. That is the point of the hardware tier,
 and the reason the suites assert on parsed content rather than on the call

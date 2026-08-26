@@ -180,8 +180,8 @@ describe("verification that cannot run", () => {
     // the buffer, and starts it again. So the PC cannot be pinned to the
     // reset vector, however well the reset went.
     const b = new JLinkBackend({ device: "NRF52840_XXAA" }, new ProcessManager());
-    // rttConnected only takes while the GDB server is up — RTT is served by it.
-    (b as any).setState(require("../../src/probe/backend").ProbeState.GDB_RUNNING);
+    // rttConnected only takes while the GDB server is up — it serves RTT.
+    (b as any).isGDBServerRunning = () => true;
     b.rttConnected = true;
     assert.equal(b.rttConnected, true, "precondition");
     const reads: number[] = [];
