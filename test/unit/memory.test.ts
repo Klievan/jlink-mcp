@@ -264,6 +264,54 @@ describe("readFaultRegisters — end to end from a memory transcript", () => {
   });
 });
 
+describe("readFaultRegisters — a failed read is not good news", () => {
+  // The most dangerous sentence this tool can produce is "No faults
+  // detected", because it is exactly what a healthy target says. Defaulting a
+  // failed read to zeroes makes a broken read indistinguishable from a clean
+  // board — which has now happened on hardware twice by different routes:
+  // once when the dump parser dropped half of every line, and once when the
+  // target was spinning in its own fault handler (which a synchronous remote
+  // counts as running, and therefore refuses to read).
+  test("says it could not read, rather than reporting no faults", async () => {
+    const b = new StubBackend();
+    b.memoryResponses = [{
+      success: false, rawOutput: "", output: "",
+      error: "Target is running; GDB cannot accept commands until it stops.",
+    }];
+    const { decoded } = await b.readFaultRegisters();
+    assert.doesNotMatch(decoded, /No faults detected/,
+      "a failed read must never decode as a healthy target");
+    assert.match(decoded, /Could not read/i);
+    assert.match(decoded, /NOT a report that the target is healthy/i);
+  });
+
+  test("surfaces the underlying reason so the caller can act", async () => {
+    const b = new StubBackend();
+    b.memoryResponses = [{ success: false, rawOutput: "", output: "", error: "Target is running" }];
+    const { decoded } = await b.readFaultRegisters();
+    assert.match(decoded, /Target is running/);
+    assert.match(decoded, /halt it first/i, "should say what to do about it");
+  });
+
+  test("an empty dump counts as a failed read even when success is true", async () => {
+    // A successful call that parsed to nothing is still nothing.
+    const b = new StubBackend();
+    b.memoryResponses = [{ success: true, rawOutput: "no data here", output: "" }];
+    const { decoded } = await b.readFaultRegisters();
+    assert.doesNotMatch(decoded, /No faults detected/);
+  });
+
+  test("a genuinely clean target still reports no faults", async () => {
+    // The honest negative must survive: this is a real all-zero read.
+    const b = new StubBackend();
+    const clean = "E000ED28 = 00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  ................\n" +
+                  "E000ED38 = 00 00 00 00                                       ....";
+    b.memoryResponses = [{ success: true, rawOutput: clean, output: clean }];
+    const { decoded } = await b.readFaultRegisters();
+    assert.match(decoded, /No faults detected/);
+  });
+});
+
 describe("readMemory via the GDB bridge", () => {
   const bridge = new FakeGdbBridge({
     "x/": [

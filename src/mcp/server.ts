@@ -227,6 +227,17 @@ export class JLinkMcpServer {
         await this.ensureGdbSession();
         const sections: string[] = ["## Crash Diagnosis"];
 
+        // Halt before reading anything. A crashed target is usually spinning
+        // in its fault handler, which a synchronous remote counts as running
+        // — so every read gets refused and the diagnosis comes back empty,
+        // decoding as "No faults detected" on a board that has plainly
+        // crashed. Diagnosing a crash means stopping the CPU; that is not a
+        // side effect to avoid, it is the prerequisite.
+        const halted = await probe.halt();
+        if (!halted.success) {
+          sections.push(`(warning: could not halt the target — readings may be incomplete)`);
+        }
+
         const regResult = await probe.readAllRegisters();
         const regs = probe.parseRegisters(regResult.rawOutput);
         if (regs) {
