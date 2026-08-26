@@ -106,31 +106,22 @@ describe("GDB routing — register name translation", () => {
   }
 });
 
-describe("J-Link register name translation", () => {
-  // The mirror of the GDB mapping above, for the JLinkExe path. J-Link names
-  // core registers architecturally and rejects the ARM mnemonics:
-  //   J-Link> rreg PC
-  //   Illegal register name.
-  // Two of read_register's own three documented examples ('PC', 'SP') hit
-  // that, observed on real hardware before this mapping existed.
-  const toJLink = (n: string) => (JLinkBackend as any).toJLinkRegName(n);
+describe("J-Link register name canonicalization", () => {
+  // read_register no longer uses `rreg` at all: J-Link rejects both the ARM
+  // mnemonics and the architectural names it prints as valid ("rreg PC" and
+  // "rreg R15" each answer "Illegal register name." plus a 100-entry list).
+  // It reads the whole set with `regs` and picks the register out, so names
+  // only need normalizing to the spelling parseRegisters produces.
+  const canon = (n: string) => (JLinkBackend as any).toCanonicalRegName(n);
   const cases: [string, string][] = [
-    ["PC", "R15"],
-    ["SP", "R13"],
-    ["LR", "R14"],
-    ["pc", "R15"],
-    ["R0", "R0"],
-    ["r0", "R0"],
-    ["MSP", "MSP"],
-    ["PSP", "PSP"],
-    ["XPSR", "XPSR"],
-    ["CONTROL", "CONTROL"],
-    ["$pc", "R15"],
-    ["  sp  ", "R13"],
+    ["PC", "PC"], ["pc", "PC"], ["$pc", "PC"], ["R15", "PC"],
+    ["SP", "SP"], ["R13", "SP"], ["SP(R13)", "SP"],
+    ["LR", "LR"], ["R14", "LR"],
+    ["R0", "R0"], ["MSP", "MSP"], ["XPSR", "XPSR"], ["  msp  ", "MSP"],
   ];
   for (const [input, expected] of cases) {
     test(`${JSON.stringify(input)} -> ${expected}`, () => {
-      assert.equal(toJLink(input), expected);
+      assert.equal(canon(input), expected);
     });
   }
 });

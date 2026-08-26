@@ -278,35 +278,6 @@ export class JLinkBackend extends ProbeBackend {
     return aliases[n] ?? n;
   }
 
-  /**
-   * Translate a caller-supplied register name into what J-Link Commander's
-   * `rreg` accepts.
-   *
-   * J-Link names the core registers architecturally — `R15 (PC)`, `R13 (SP)`,
-   * `R14` — and rejects the ARM mnemonics outright:
-   *
-   *     J-Link> rreg PC
-   *     Illegal register name.
-   *     R0, R1, ... R13 (SP), R14, R15 (PC), XPSR, MSP, PSP, ...
-   *
-   * The read_register tool documents 'PC', 'SP' and 'R0' as its examples, so
-   * without this mapping two of its own three examples fail. MSP, PSP, XPSR,
-   * CONTROL and friends are already spelled the way J-Link wants and pass
-   * straight through.
-   */
-  private static toJLinkRegName(name: string): string {
-    const n = name.trim().replace(/^\$/, "").toUpperCase();
-    const aliases: Record<string, string> = {
-      PC: "R15",
-      SP: "R13",
-      LR: "R14",
-      "SP(R13)": "R13",
-      "R14(LR)": "R14",
-      "R15(PC)": "R15",
-    };
-    return aliases[n] ?? n;
-  }
-
   /** Wrap a GDB command result in the shared `CommandResult` shape. */
   private async runViaGdb(cmd: string, timeoutMs: number = 10000): Promise<CommandResult> {
     const r = await this.gdbBridge!.command(cmd, timeoutMs);
@@ -363,12 +334,23 @@ export class JLinkBackend extends ProbeBackend {
     return this.withPreflight("step", () => this.execRaw(["halt", "s"]));
   }
 
+  /**
+   * Read `length` bytes at `address`.
+   *
+   * The byte count goes to J-Link Commander as an explicit hex literal.
+   * `mem` parses its length argument as hex, so a decimal count is silently
+   * misread: `mem 0x0, 20` returns 0x20 = 32 bytes and `mem 0x0, 256` returns
+   * 0x256 = 598. Both observed on hardware. Every caller passing a decimal
+   * length — readFaultRegisters asking for 20, snapshot asking for 64 — was
+   * over-reading, and any caller counting the bytes back got the wrong answer.
+   */
   async readMemory(address: number, length: number): Promise<CommandResult> {
     if (this.useGdb()) return this.readMemoryViaGdb(address, length);
     // Skip preflight when reading DHCSR (that IS the preflight)
     const isDHCSR = address === 0xE000EDF0;
-    if (isDHCSR) return this.acquireLock(() => this.execRaw([`mem 0x${address.toString(16)}, ${length}`]));
-    return this.withPreflight("readMemory", () => this.execRaw([`mem 0x${address.toString(16)}, ${length}`]));
+    const cmd = `mem 0x${address.toString(16)}, 0x${length.toString(16)}`;
+    if (isDHCSR) return this.acquireLock(() => this.execRaw([cmd]));
+    return this.withPreflight("readMemory", () => this.execRaw([cmd]));
   }
   async writeMemory(address: number, value: number): Promise<CommandResult> {
     if (this.useGdb()) {
@@ -381,10 +363,50 @@ export class JLinkBackend extends ProbeBackend {
     if (this.useGdb()) return this.runViaGdb("info all-registers", 5000);
     return this.withPreflight("readAllRegisters", () => this.execRaw(["halt", "regs"]));
   }
+  /**
+   * Read one named register.
+   *
+   * The JLinkExe path deliberately does NOT use `rreg`. J-Link Commander
+   * rejects both the ARM mnemonics and the architectural names it prints as
+   * valid — `rreg PC` and `rreg R15` both answer "Illegal register name." and
+   * dump a 100-entry list — so the tool returned an error page instead of a
+   * value. `regs` prints the whole set reliably, so read the set and pick the
+   * register out of it with the parser that already understands both the
+   * J-Link and GDB formats.
+   *
+   * This also makes the tool answer the question that was asked: previously a
+   * successful call returned the entire register dump.
+   */
   async readRegister(name: string): Promise<CommandResult> {
     if (this.useGdb()) return this.runViaGdb(`info registers ${JLinkBackend.toGdbRegName(name)}`, 5000);
-    return this.withPreflight("readRegister",
-      () => this.execRaw(["halt", `rreg ${JLinkBackend.toJLinkRegName(name)}`]));
+
+    const result = await this.withPreflight("readRegister", () => this.execRaw(["halt", "regs"]));
+    if (!result.success) return result;
+
+    const regs = this.parseRegisters(result.rawOutput);
+    const wanted = JLinkBackend.toCanonicalRegName(name);
+    const value = regs?.[wanted];
+    if (value === undefined) {
+      return {
+        ...result,
+        success: false,
+        output: `Unknown register '${name}'. Available: ${regs ? Object.keys(regs).join(", ") : "(none parsed)"}`,
+      };
+    }
+    return { ...result, output: `${wanted} = ${value}` };
+  }
+
+  /**
+   * Normalize a register name to the spelling `parseRegisters` produces.
+   * Accepts the ARM mnemonics, the Rn forms, and a `$` sigil.
+   */
+  private static toCanonicalRegName(name: string): string {
+    const n = name.trim().replace(/^\$/, "").toUpperCase();
+    const aliases: Record<string, string> = {
+      R13: "SP", R14: "LR", R15: "PC",
+      "SP(R13)": "SP", "R14(LR)": "LR", "R15(PC)": "PC",
+    };
+    return aliases[n] ?? n;
   }
 
   /**
