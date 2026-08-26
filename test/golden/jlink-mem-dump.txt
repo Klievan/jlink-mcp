@@ -1,0 +1,43 @@
+SEGGER J-Link Commander V9.70 (Compiled Aug 19 2026 12:16:13)
+DLL version V9.70, compiled Aug 19 2026 12:15:25
+
+Connecting to J-Link ...O.K.
+Firmware: J-Link OB-nRF5340-NordicSemi compiled Jun 11 2026 13:12:28
+Hardware version: V1.00
+J-Link uptime (since boot): 0d 00h 34m 57s
+S/N: 1050298247
+License(s): RDI,FlashBP,FlashDL,JFlash,GDB
+USB speed mode: Full speed (12 MBit/s)
+VTref=3.300V
+Device "NRF52840_XXAA" selected.
+
+
+Connecting to target via SWD
+InitTarget() start
+InitTarget() end - Took 1.67ms
+Found SW-DP with ID 0x2BA01477
+DPIDR: 0x2BA01477
+CoreSight SoC-400 or earlier
+Scanning AP map to find all available APs
+AP[2]: Stopped AP scan as end of AP map has been reached
+AP[0]: AHB-AP (IDR: 0x24770011, ADDR: 0x00000000)
+AP[1]: JTAG-AP (IDR: 0x02880000, ADDR: 0x01000000)
+Iterating through AP map to find AHB-AP to use
+AP[0]: Core found
+AP[0]: AHB-AP ROM base: 0xE00FF000
+CPUID register: 0x410FC241. Implementer code: 0x41 (ARM)
+Found Cortex-M4 r0p1, Little endian.
+FPUnit: 6 code (BP) slots and 2 literal slots
+CoreSight components:
+ROMTbl[0] @ E00FF000
+[0]: E000E000 CID B105E00D PID 000BB00C SCS-M7
+[1]: E0001000 CID B105E00D PID 003BB002 DWT
+[2]: E0002000 CID B105E00D PID 002BB003 FPB
+[3]: E0000000 CID B105E00D PID 003BB001 ITM
+[4]: E0040000 CID B105900D PID 000BB9A1 TPIU
+[5]: E0041000 CID B105900D PID 000BB925 ETM
+Memory zones:
+  Zone: "Default" Description: Default access mode
+Cortex-M4 identified.
+00000100 = 4A 4C 49 4E 4B 4D 43 50  2D 48 49 4C 2D 56 31 00  JLINKMCP-HIL-V1.
+00000110 = 00 01 02 03 04 05 06 07  F8 F9 FA FB FC FD FE FF  ................

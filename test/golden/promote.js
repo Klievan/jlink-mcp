@@ -26,9 +26,16 @@ const GOLDEN = __dirname;
 const WANTED = [
   { fixture: "jlink-halt-regs.txt", channel: "jlink", match: /(^|;\s*)regs\b/,
     ok: (t) => /^R0 = [0-9A-F]{8}/m.test(t) && /SP\(R13\)/.test(t) },
-  { fixture: "jlink-mem-dump.txt", channel: "jlink", match: /^mem 0x0,/,
-    ok: (t) => /^[0-9A-F]{8} = ([0-9A-F]{2} ){8}/m.test(t) },
-  { fixture: "gdb-info-all-registers.txt", channel: "gdb", match: /^info all-registers$/,
+  // The constant block, not address 0: reading 0 also happens during the
+  // erase test, and a dump of blank flash is all FF — technically a valid
+  // dump line, but it exercises neither the ASCII column nor a byte value
+  // the parser could get wrong.
+  { fixture: "jlink-mem-dump.txt", channel: "jlink", match: /^mem 0x100,/,
+    ok: (t) => /^[0-9A-F]{8} = ([0-9A-F]{2} ){8}/m.test(t) && /JLINKMCP/.test(t) },
+  // Raw MI, deliberately. It is the input to cleanMI, and the register tests
+  // pipe it through cleanMI themselves — which is the pipeline production
+  // actually runs, rather than a pre-cleaned snapshot that could drift from it.
+  { fixture: "gdb-info-all-registers-raw.txt", channel: "gdb", match: /^info all-registers$/,
     ok: (t) => /~"(pc|r0)\s/.test(t) },
   { fixture: "gdb-mi-x20bx-raw.txt", channel: "gdb", match: /^x\/20bx/,
     ok: (t) => /~"0x[0-9a-f]+/.test(t) },

@@ -336,7 +336,7 @@ export class JLinkMcpServer {
         const r = await probe.readMemory(addr, length);
         const dump = probe.parseMemoryDump(r.rawOutput);
         if (dump.length > 0) return { content: [{ type: "text", text: dump.map((d) => `${d.address}: ${d.hex}  ${d.ascii}`).join("\n") }] };
-        return { content: [{ type: "text", text: r.output || "Could not read memory" }] };
+        return { content: [{ type: "text", text: JLinkMcpServer.resultText(r, "Could not read memory") }] };
       }
     );
 
@@ -373,7 +373,7 @@ export class JLinkMcpServer {
       async ({ register }) => {
         const g = this.requireDevice(); if (g) return g;
         const r = await probe.readRegister(register);
-        return { content: [{ type: "text", text: r.output || r.rawOutput }] };
+        return { content: [{ type: "text", text: JLinkMcpServer.resultText(r, "Could not read register") }] };
       }
     );
 
@@ -524,7 +524,7 @@ export class JLinkMcpServer {
       },
       async ({ full }) => {
         const result = await this.gdb.backtrace(full ?? false);
-        return { content: [{ type: "text", text: result.output || "(no backtrace available)" }] };
+        return { content: [{ type: "text", text: JLinkMcpServer.resultText(result, "(no backtrace available)") }] };
       }
     );
 
@@ -625,7 +625,7 @@ export class JLinkMcpServer {
       async ({ commands }) => {
         const g = this.requireDevice(); if (g) return g;
         const r = await probe.executeRaw(commands);
-        return { content: [{ type: "text", text: r.output || "(no output)" }] };
+        return { content: [{ type: "text", text: JLinkMcpServer.resultText(r, "(no output)") }] };
       }
     );
 
@@ -644,6 +644,28 @@ export class JLinkMcpServer {
         }, null, 2) }] };
       }
     );
+  }
+
+  /**
+   * Render a probe/GDB result as text, preferring the most specific thing we
+   * have: parsed output, then raw output, then the error the layer below
+   * produced, and only then a generic fallback.
+   *
+   * The layer below often knows exactly what went wrong — "Target is running;
+   * GDB cannot accept commands until it stops" — and dropping that in favour
+   * of "Could not read memory" hands the caller a dead end. Observed on
+   * hardware: reading during a run returned the generic string while the
+   * client had produced an actionable one.
+   */
+  private static resultText(
+    r: { output?: string; rawOutput?: string; error?: string; suggestedAction?: string },
+    fallback: string
+  ): string {
+    if (r.output?.trim()) return r.output;
+    if (r.rawOutput?.trim()) return r.rawOutput;
+    const parts = [r.error, r.suggestedAction].filter((x) => x && x.trim());
+    if (parts.length) return parts.join(" ");
+    return fallback;
   }
 
   private registerResources(): void {

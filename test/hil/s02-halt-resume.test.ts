@@ -208,6 +208,9 @@ describe("S2b — GDB session: halt, inspect, step are coherent", { skip }, () =
     record("hil-read-while-running.txt", out);
 
     assert.ok(elapsed < 5000, `took ${elapsed}ms — should refuse promptly, not time out`);
+    // The tool must pass through the reason the layer below gave, not
+    // replace it with a generic string. "Could not read memory" is a dead
+    // end; "Target is running... Use halt" tells the caller what to do.
     assert.match(out, /running|halt/i, `unhelpful response while running: ${JSON.stringify(out)}`);
 
     await hil.expectOk("halt");

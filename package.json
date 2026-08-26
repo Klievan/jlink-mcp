@@ -204,9 +204,10 @@
     "package": "npm run build && vsce package",
     "lint": "tsc --noEmit",
     "test": "npm run test:unit",
-    "test:unit": "tsc -p tsconfig.test.json && node --test out-test/test/unit/*.test.js",
-    "test:watch": "tsc -p tsconfig.test.json && node --test --watch out-test/test/unit/*.test.js",
-    "test:hil": "tsc -p tsconfig.test.json && node --test out-test/test/hil/*.test.js"
+    "test:unit": "npm run clean:test && tsc -p tsconfig.test.json && node --test out-test/test/unit/*.test.js",
+    "test:watch": "npm run clean:test && tsc -p tsconfig.test.json && node --test --watch out-test/test/unit/*.test.js",
+    "test:hil": "npm run clean:test && tsc -p tsconfig.test.json && node --test out-test/test/hil/*.test.js",
+    "clean:test": "node -e \"require('fs').rmSync('out-test',{recursive:true,force:true})\""
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
