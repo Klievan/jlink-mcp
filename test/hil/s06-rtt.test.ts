@@ -83,6 +83,22 @@ describe("S6 — RTT logging and the down channel", { skip }, () => {
       record("hil-debug-hardware.txt", [`FPB (FP_CTRL, FP_REMAP, FP_COMP0..):\n${fpb}`,
                                         `DWT:\n${dwt}`, `DEMCR:\n${demcr}`].join("\n\n"));
       parts.push(`FP_CTRL+comparators:\n${fpb}`, `DEMCR:\n${demcr}`);
+
+      // FP_COMP0..7 start at 0xE0002008, one word each; bit 0 is ENABLE.
+      // An armed comparator produces a SIGTRAP that is indistinguishable
+      // from a hang, so name it here rather than leaving the next reader to
+      // decode the dump.
+      const words = [...fpb.matchAll(/^0x[0-9A-Fa-f]+: ((?:[0-9A-Fa-f]{2} ?)+)/gm)]
+        .flatMap((m) => m[1].trim().split(/\s+/));
+      const armed: string[] = [];
+      for (let i = 0; i < 8; i++) {
+        const o = 8 + i * 4; // skip FP_CTRL and FP_REMAP
+        if (o + 3 >= words.length) break;
+        const v = (parseInt(words[o], 16) | (parseInt(words[o + 1], 16) << 8) |
+                   (parseInt(words[o + 2], 16) << 16) | (parseInt(words[o + 3], 16) << 24)) >>> 0;
+        if (v & 1) armed.push(`FP_COMP${i}=0x${v.toString(16)} (addr 0x${(v & 0x1ffffffc).toString(16)})`);
+      }
+      parts.push(armed.length ? `ARMED COMPARATORS: ${armed.join(", ")}` : "no comparators armed");
     });
 
     // Does the counter move across a genuine run window?
