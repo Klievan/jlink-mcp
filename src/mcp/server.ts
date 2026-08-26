@@ -346,7 +346,13 @@ export class JLinkMcpServer {
         const g = this.requireDevice(); if (g) return g;
         await this.ensureGdbSession();
         const r = await probe.reset(halt ?? false);
-        return { content: [{ type: "text", text: r.success ? `Device reset${halt ? " (halted)" : " (running)"}` : `Failed: ${r.output}` }] };
+        // `r.output` is empty for a command the GDB client refused, so
+        // reporting only that produced a bare "Failed: " with the reason
+        // dropped. resultText falls back to the underlying error and its
+        // suggested action.
+        return { content: [{ type: "text", text: r.success
+          ? `Device reset${halt ? " (halted at the reset vector)" : " (running)"}`
+          : `Reset failed: ${JLinkMcpServer.resultText(r, "no reason reported")}` }] };
       }
     );
 
