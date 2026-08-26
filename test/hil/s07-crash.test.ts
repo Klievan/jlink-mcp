@@ -1,7 +1,7 @@
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
 import {
-  HilClient, ON_HIL_RUNNER, record, RTT_FIXTURE_HEX, sym, reg, hex, withTargetHalted,
+  HilClient, ON_HIL_RUNNER, record, RTT_FIXTURE_HEX, sym, reg, hex, withTargetHalted, word32,
 } from "./harness/mcp-client";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -129,7 +129,31 @@ describe("S7 — crash injection and diagnosis", { skip }, () => {
     // a fixture bug rather than a real crash.
     const out = await hil.expectOk("rtt_search", { pattern: "injected fault" });
     record("hil-rtt-injected-fault.txt", out);
-    assert.match(out, /injected fault/);
+
+    // Instrument before asserting. The snapshot in the previous test carried
+    // the boot log but stopped around seq=4 — well before the injection — so
+    // "the line is missing" and "collection stopped before the line was
+    // written" look identical from here, and they need different fixes.
+    //
+    // Up-buffer 0 sits at offset 24 of SEGGER's control block, WrOff at +12
+    // and RdOff at +16: words 9 and 10 of a dump from _SEGGER_RTT. WrOff is
+    // the target's, RdOff the host's. A gap between them is data the firmware
+    // wrote and the probe never collected.
+    const cb = await withTargetHalted(hil, () =>
+      hil.expectOk("read_memory", { address: hex(sym("_SEGGER_RTT")), length: 48 }));
+    const wr = word32(cb, 9), rd = word32(cb, 10);
+    const diag = [
+      `WrOff (target wrote): ${wr}`,
+      `RdOff (host collected): ${rd}`,
+      wr !== null && rd !== null && wr !== rd
+        ? `=> ${wr - rd} bytes written and never collected: the probe stopped draining, as it ` +
+          `does across a reset — and this suite flashes, which resets.`
+        : "=> the host drained everything the target wrote; the line was never logged",
+      `control block:\n${cb}`,
+    ].join("\n");
+    record("hil-rtt-injected-fault-diagnostic.txt", diag);
+
+    assert.match(out, /injected fault/, `RTT never carried the injection line.\n${diag}`);
   });
 
   test("the target recovers for the next test", async () => {
