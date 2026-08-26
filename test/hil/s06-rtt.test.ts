@@ -223,10 +223,22 @@ describe("S6 — RTT logging and the down channel", { skip }, () => {
     await hil.expectOk("reset", { halt: true });
     const regs = await withTargetHalted(hil, () => hil.expectOk("read_registers"));
     record("hil-reset-halt-registers.txt", regs);
+
+    // Cross-check through the other channel. `monitor reset` reports success
+    // ("Resetting target", ^done) yet PC comes back mid-firmware, which has
+    // two very different explanations: the core did not reset, or it did and
+    // GDB handed us cached registers from before it. Reading the same thing
+    // with GDB routing disabled distinguishes them — JLinkExe has no cache.
+    const viaJLinkExe = await hil.call("probe_command", { commands: ["halt", "regs"] });
+    record("hil-reset-halt-via-jlinkexe.txt", viaJLinkExe);
+    const rawPc = viaJLinkExe.match(/\bPC = ([0-9A-Fa-f]{8})/)?.[1];
+
     const pc = reg(regs, "PC");
     assert.ok(pc !== null && pc >= sym("Reset_Handler") && pc <= sym("Reset_Handler") + 0x20,
       `after reset(halt) PC is 0x${pc?.toString(16)}, not the reset handler at ` +
-      `0x${sym("Reset_Handler").toString(16)} — reset is not resetting the core`);
+      `0x${sym("Reset_Handler").toString(16)}. JLinkExe reports PC=0x${rawPc ?? "?"} for the same ` +
+      `moment — if that IS the reset handler, the core reset fine and GDB served a stale ` +
+      `register cache; if it agrees, the reset genuinely did not take.`);
     await hil.expectOk("resume");
 
     // And the server should still be up to have served it.
