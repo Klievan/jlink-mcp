@@ -25,6 +25,10 @@ export class JLinkMcpServer {
     );
 
     this.gdb = new GDBClient(gdbPath || "arm-none-eabi-gdb");
+    // Let the probe backend route CPU-control and read commands through
+    // the GDB session when it's connected, instead of spawning a
+    // competing probe-CLI process that would evict the GDB server.
+    this.probe.setGdbBridge(this.gdb);
     const effectiveRttPort = rttPort ?? this.probe.getRTTPort();
     this.rttClient = new RTTClient("localhost", effectiveRttPort > 0 ? effectiveRttPort : 19021);
     this.telnetProxy = new TelnetProxy(

@@ -69,6 +69,25 @@ export interface ProbeStatus {
 export type ProbeType = "jlink" | "openocd" | "blackmagic" | "probe-rs";
 
 /**
+ * Minimal surface a backend needs to route CPU-control and read commands
+ * through a running GDB session instead of spawning its own probe-CLI
+ * process. Implemented by `GDBClient`; injected by the MCP server via
+ * `ProbeBackend.setGdbBridge()`.
+ *
+ * Kept intentionally small so backends don't depend on the concrete
+ * GDB client class.
+ */
+export interface GdbBridge {
+  isConnected(): boolean;
+  command(cmd: string, timeout?: number): Promise<{
+    success: boolean;
+    output: string;
+    error?: string;
+    stopReason?: string;
+  }>;
+}
+
+/**
  * Abstract base for all debug probe backends.
  * Implementations only need to override the abstract methods.
  * Shared utilities (register parsing, fault decoding, memory parsing)
@@ -83,6 +102,14 @@ export abstract class ProbeBackend {
   protected _state: ProbeState = ProbeState.DISCONNECTED;
   private _rttConnected = false;
   private _lock: Promise<void> = Promise.resolve();
+  /**
+   * Optional GDB session the backend can route commands through. Injected
+   * by the MCP server after both objects are constructed. When present
+   * and connected, backends should prefer this over spawning a competing
+   * probe-CLI process, since the underlying probe can only serve one
+   * session at a time.
+   */
+  protected gdbBridge?: GdbBridge;
 
   get state(): ProbeState { return this._state; }
 
@@ -212,6 +239,11 @@ export abstract class ProbeBackend {
    */
   async recover(): Promise<boolean> {
     return false;
+  }
+
+  /** Inject a GDB session for command routing. See {@link GdbBridge}. */
+  setGdbBridge(bridge: GdbBridge | undefined): void {
+    this.gdbBridge = bridge;
   }
 
   // ── Device control ───────────────────────────────────────────────
