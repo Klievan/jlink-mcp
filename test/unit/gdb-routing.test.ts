@@ -80,10 +80,33 @@ describe("GDB routing — command mapping", () => {
 });
 
 describe("GDB routing — reset sequencing", () => {
-  test("reset(halt) sends a single command", async () => {
-    const bridge = new FakeGdbBridge();
+  test("reset(halt) arms vector catch so the core stops AT the reset vector", async () => {
+    // Measured on hardware: `monitor reset` alone leaves the CPU running in
+    // main, with GDB and JLinkExe agreeing on the address — so the core really
+    // was running, not a stale cache. Halting afterwards is no good either:
+    // the core has executed an arbitrary amount of startup by then, so PC is
+    // wherever it reached. DEMCR.VC_CORERESET stops it before it starts.
+    const bridge = new FakeGdbBridge({ "x/1wx": "0xe000edfc:\t0x01000000" });
     await makeBackend(bridge).reset(true);
-    assert.deepEqual(bridge.sent, ["monitor reset"]);
+
+    const armed = bridge.sent.findIndex((c) => /set .*0xe000edfc = 0x1000001\b/.test(c));
+    const reset = bridge.sent.indexOf("monitor reset");
+    const cleared = bridge.sent.findIndex((c, i) => i > reset && /set .*0xe000edfc = 0x1000000\b/.test(c));
+
+    assert.ok(armed >= 0, `vector catch never armed: ${JSON.stringify(bridge.sent)}`);
+    assert.ok(armed < reset, "catch must be armed before the reset, or the core is already gone");
+    assert.ok(cleared > reset, "catch must be cleared after, not left armed for the next session");
+  });
+
+  test("reset(halt) preserves the rest of DEMCR", async () => {
+    // Only bit 0 is ours. Clobbering the register would drop TRCENA and any
+    // other vector catches the caller had set.
+    const bridge = new FakeGdbBridge({ "x/1wx": "0xe000edfc:\t0x01000010" });
+    await makeBackend(bridge).reset(true);
+    const writes = bridge.sent.filter((c) => c.includes("0xe000edfc ="));
+    assert.equal(writes.length, 2);
+    assert.match(writes[0], /0x1000011\b/, "should set bit 0 on top of the existing value");
+    assert.match(writes[1], /0x1000010\b/, "should restore exactly what was there");
   });
 
   test("reset(run) sends two separate commands, never one multi-line string", async () => {
