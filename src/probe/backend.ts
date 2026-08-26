@@ -517,6 +517,26 @@ export abstract class ProbeBackend {
     const result = await this.readMemory(0xE000ED28, 20);
     const dump = this.parseMemoryDump(result.rawOutput);
 
+    // A read that did not happen is not a report of zeroes. Defaulting to 0
+    // here decodes as "No faults detected", which is the most dangerous
+    // sentence this tool can produce: it is exactly what a healthy target
+    // says, so a failed read is indistinguishable from good news.
+    //
+    // Seen on hardware twice, by different routes — once when the dump parser
+    // dropped half of every line, and once when the target was spinning in
+    // its own fault handler, which a synchronous remote treats as "running"
+    // and therefore refuses to read.
+    if (!result.success || dump.length === 0) {
+      return {
+        result,
+        decoded:
+          "Could not read the fault registers — this is NOT a report that the target is healthy.\n" +
+          "The target may be running (halt it first: a CPU spinning in a fault handler still counts as running).\n" +
+          (result.error ? `Underlying error: ${result.error}` : ""),
+        raw: { cfsr: 0, hfsr: 0, dfsr: 0, mmfar: 0, bfar: 0 },
+      };
+    }
+
     let cfsr = 0, hfsr = 0, dfsr = 0, mmfar = 0, bfar = 0;
     if (dump.length > 0) {
       const allHex = dump.map((d) => d.hex).join(" ");

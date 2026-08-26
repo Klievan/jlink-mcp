@@ -207,7 +207,8 @@
     "test:unit": "npm run clean:test && tsc -p tsconfig.test.json && node --test out-test/test/unit/*.test.js",
     "test:watch": "npm run clean:test && tsc -p tsconfig.test.json && node --test --watch out-test/test/unit/*.test.js",
     "test:hil": "npm run clean:test && tsc -p tsconfig.test.json && node --test out-test/test/hil/*.test.js",
-    "clean:test": "node -e \"require('fs').rmSync('out-test',{recursive:true,force:true})\""
+    "clean:test": "node -e \"require('fs').rmSync('out-test',{recursive:true,force:true})\"",
+    "demo": "node demo/story.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
