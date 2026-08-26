@@ -1,5 +1,5 @@
 import { ChildProcess, spawn } from "child_process";
-import { log, logError } from "../utils/logger";
+import { log, logError, logRaw } from "../utils/logger";
 
 export interface GDBResponse {
   success: boolean;
@@ -265,6 +265,7 @@ export class GDBClient {
     // response-detection state machine and needs care).
     this.stopEvent = null;
     const rawOutput = await this.sendCommand(cmd, isRunCommand ? timeout : 10000, isRunCommand);
+    logRaw("gdb", cmd, rawOutput);
     const output = this.cleanMI(rawOutput);
 
     // Watch for signals that the remote died mid-session. GDB itself is
