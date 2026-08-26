@@ -2,6 +2,7 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { JLinkBackend } from "../../src/probe/jlink";
 import { ProcessManager } from "../../src/utils/process-manager";
+import { FakeGdbBridge } from "../helpers";
 
 /**
  * Reset is J-Link's job; verifying it happened is ours.
@@ -139,11 +140,26 @@ describe("restarting RTT collection after a reset", () => {
     return { b, scripts };
   }
 
-  test("re-points the probe at the control block", async () => {
-    const { b, scripts } = backend(0x20000000);
+  test("sends the restart to the GDB server, which owns the RTT port", async () => {
+    // Not to a JLinkExe of our own: that configures a different DLL instance,
+    // and on a probe that serves one client at a time it evicts the server it
+    // was meant to fix. Measured — the command ran, was acknowledged, and
+    // changed nothing, the control block still showing 490 bytes written and
+    // none collected.
+    const { b } = backend(0x20000000);
+    const bridge = new FakeGdbBridge();
+    b.setGdbBridge(bridge);
     const r = await b.restartRTT();
     assert.equal(r.ok, true, r.detail);
-    assert.deepEqual(scripts[0], ["exec SetRTTAddr 0x20000000"]);
+    assert.deepEqual(bridge.sent, ["monitor exec SetRTTAddr 0x20000000"]);
+  });
+
+  test("refuses rather than sending it somewhere it cannot work", async () => {
+    const { b, scripts } = backend(0x20000000);
+    const r = await b.restartRTT();
+    assert.equal(r.ok, false);
+    assert.match(r.detail, /GDB/i);
+    assert.equal(scripts.length, 0, "must not spawn a JLinkExe for this");
   });
 
   test("says why it cannot, rather than leaving a dead stream looking quiet", async () => {

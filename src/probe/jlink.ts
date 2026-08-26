@@ -859,10 +859,24 @@ export class JLinkBackend extends ProbeBackend {
       };
     }
 
+    // This has to reach the GDB server, because that is the process that owns
+    // the RTT telnet port and does the collecting. Sending it to a JLinkExe of
+    // our own configures that process's DLL instance instead — a different
+    // collector, on a probe that serves one client at a time, so it also
+    // evicts the server it was meant to fix. Measured: the command ran, was
+    // acknowledged, and changed nothing, with the control block still showing
+    // 490 bytes written and none collected.
+    if (!this.useGdb()) {
+      return {
+        ok: false,
+        detail:
+          "RTT collection can only be restarted through the GDB server, which owns the RTT port " +
+          "— and no GDB client is attached to send it through. Connect one (gdb_connect) first.",
+      };
+    }
+
     const cmd = `SetRTTAddr 0x${addr.toString(16)}`;
-    const r = this.useGdb()
-      ? await this.runViaGdb(`monitor exec ${cmd}`, 5000)
-      : await this.acquireLock(() => this.execRaw([`exec ${cmd}`]));
+    const r = await this.runViaGdb(`monitor exec ${cmd}`, 5000);
 
     return r.success
       ? { ok: true, detail: `RTT collection restarted at 0x${addr.toString(16)}` }
