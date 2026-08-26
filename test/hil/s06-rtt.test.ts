@@ -1,0 +1,115 @@
+import { test, describe, before, after } from "node:test";
+import assert from "node:assert/strict";
+import {
+  HilClient, ON_HIL_RUNNER, record, RTT_FIXTURE_HEX, sym, word32, hex,
+} from "./harness/mcp-client";
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const skip = !ON_HIL_RUNNER && "requires HIL=1";
+
+/**
+ * S6 — RTT, against firmware that actually talks.
+ *
+ * Everything here was previously untestable on hardware: the target was a
+ * silent spin loop, so the eleven rtt_* and command-channel behaviours had
+ * only synthetic fixtures behind them.
+ */
+describe("S6 — RTT logging and the down channel", { skip }, () => {
+  const hil = new HilClient("s06-rtt");
+
+  before(async () => {
+    await hil.start();
+    await hil.expectOk("flash", { filePath: RTT_FIXTURE_HEX });
+    await hil.expectOk("gdb_server_start");
+    await sleep(1500);
+    await hil.expectOk("rtt_connect");
+    await hil.expectOk("reset", { halt: false });
+    await sleep(1500); // let the boot banner land
+  });
+
+  after(async () => {
+    await hil.call("rtt_disconnect");
+    await hil.call("gdb_server_stop");
+    await hil.stop();
+  });
+
+  test("the boot banner arrives", async () => {
+    const out = await hil.expectOk("rtt_read", { count: 50 });
+    record("hil-rtt-boot.txt", out);
+    assert.match(out, /fixture ready/, `no boot output: ${JSON.stringify(out.slice(0, 200))}`);
+  });
+
+  test("lines parse into level and module", async () => {
+    const out = await hil.expectOk("rtt_read", { count: 50 });
+    // The Zephyr shape the parser expects: [ts] <level> module: message
+    assert.match(out, /\[\d{2}:\d{2}:\d{2}\.\d{3},\d{3}\] <inf> hil_fixture:/);
+    assert.match(out, /<dbg> sensor_drv:/);
+  });
+
+  test("search filters by level", async () => {
+    const errs = await hil.expectOk("rtt_search", { level: "wrn" });
+    record("hil-rtt-search-level.txt", errs);
+    assert.match(errs, /out of range/);
+    assert.ok(!/<inf>/.test(errs), "level filter leaked other levels");
+  });
+
+  test("search filters by module", async () => {
+    const out = await hil.expectOk("rtt_search", { module: "sensor_drv" });
+    assert.match(out, /sensor_drv/);
+    assert.ok(!/hil_fixture/.test(out), "module filter leaked another module");
+  });
+
+  test("search filters by regex", async () => {
+    const out = await hil.expectOk("rtt_search", { pattern: "seq=\\d+" });
+    assert.match(out, /seq=\d+/);
+  });
+
+  test("the down channel round-trips", async () => {
+    // Proves rtt_send reaches the target and its reply comes back up — the
+    // one behaviour a one-way log stream cannot demonstrate.
+    await hil.expectOk("rtt_clear");
+    await hil.expectOk("rtt_send", { data: "echo:round-trip-ok\n" });
+    await sleep(800);
+    const out = await hil.expectOk("rtt_read", { count: 50 });
+    record("hil-rtt-echo.txt", out);
+    assert.match(out, /round-trip-ok/, `echo did not come back: ${JSON.stringify(out.slice(0, 200))}`);
+  });
+
+  test("rtt_clear empties the buffer", async () => {
+    await hil.expectOk("rtt_clear");
+    const out = await hil.expectOk("rtt_read", { count: 50 });
+    assert.ok(out.trim().length === 0 || !/fixture ready/.test(out), "buffer not cleared");
+  });
+
+  test("a burst arrives without gaps in the sequence", async () => {
+    // The fixture numbers every line. A gap means a drop, which is otherwise
+    // indistinguishable from the target simply having been quiet.
+    await hil.expectOk("rtt_clear");
+    await hil.expectOk("rtt_send", { data: "burst\n" });
+    await sleep(2000);
+    const out = await hil.expectOk("rtt_read", { count: 200 });
+    record("hil-rtt-burst.txt", out);
+
+    const seqs = [...out.matchAll(/seq=(\d+)/g)].map((m) => Number(m[1]));
+    assert.ok(seqs.length > 50, `expected a burst, got ${seqs.length} lines`);
+    for (let i = 1; i < seqs.length; i++) {
+      assert.equal(seqs[i], seqs[i - 1] + 1,
+        `sequence gap: ${seqs[i - 1]} -> ${seqs[i]} (${seqs.length - i} lines in). RTT dropped data.`);
+    }
+  });
+
+  test("the target keeps running while RTT is connected", async () => {
+    const a = word32(await hil.expectOk("read_memory", { address: hex(sym("test_counter")), length: 4 }));
+    await sleep(300);
+    const b = word32(await hil.expectOk("read_memory", { address: hex(sym("test_counter")), length: 4 }));
+    assert.notEqual(a, b, "counter frozen — RTT polling should not stall the target");
+  });
+
+  test("disconnect and reconnect works", async () => {
+    await hil.expectOk("rtt_disconnect");
+    await hil.expectOk("rtt_connect");
+    await hil.expectOk("rtt_send", { data: "echo:after-reconnect\n" });
+    await sleep(800);
+    assert.match(await hil.expectOk("rtt_read", { count: 50 }), /after-reconnect/);
+  });
+});
