@@ -80,33 +80,45 @@ describe("GDB routing — command mapping", () => {
 });
 
 describe("GDB routing — reset sequencing", () => {
-  test("reset(halt) arms vector catch so the core stops AT the reset vector", async () => {
-    // Measured on hardware: `monitor reset` alone leaves the CPU running in
-    // main, with GDB and JLinkExe agreeing on the address — so the core really
-    // was running, not a stale cache. Halting afterwards is no good either:
-    // the core has executed an arbitrary amount of startup by then, so PC is
-    // wherever it reached. DEMCR.VC_CORERESET stops it before it starts.
-    const bridge = new FakeGdbBridge({ "x/1wx": "0xe000edfc:\t0x01000000" });
+  test("reset(halt) leaves the vector catch to J-Link", async () => {
+    // This used to arm DEMCR.VC_CORERESET by hand around `monitor reset`.
+    // SEGGER's reset-strategy reference says the default Cortex-M strategy
+    // already does exactly that — "ensured by setting the VC_CORERESET in the
+    // DEMCR" — and the GDB server documents `monitor reset` as "resets and
+    // halts the target CPU". Doing it ourselves duplicated J-Link's work and
+    // bypassed the per-device sequence it picks.
+    //
+    // https://kb.segger.com/J-Link_Reset_Strategies
+    const bridge = new FakeGdbBridge();
     await makeBackend(bridge).reset(true);
 
-    const armed = bridge.sent.findIndex((c) => /set .*0xe000edfc = 0x1000001\b/.test(c));
-    const reset = bridge.sent.indexOf("monitor reset");
-    const cleared = bridge.sent.findIndex((c, i) => i > reset && /set .*0xe000edfc = 0x1000000\b/.test(c));
-
-    assert.ok(armed >= 0, `vector catch never armed: ${JSON.stringify(bridge.sent)}`);
-    assert.ok(armed < reset, "catch must be armed before the reset, or the core is already gone");
-    assert.ok(cleared > reset, "catch must be cleared after, not left armed for the next session");
+    assert.equal(bridge.sent[0], "monitor reset");
+    assert.ok(
+      !bridge.sent.some((c) => c.includes("0xe000edfc")),
+      `DEMCR is J-Link's to manage: ${JSON.stringify(bridge.sent)}`
+    );
   });
 
-  test("reset(halt) preserves the rest of DEMCR", async () => {
-    // Only bit 0 is ours. Clobbering the register would drop TRCENA and any
-    // other vector catches the caller had set.
-    const bridge = new FakeGdbBridge({ "x/1wx": "0xe000edfc:\t0x01000010" });
+  test("reset halts the target before commanding it", async () => {
+    // A reset is a recovery action, so the moment you reach for one is
+    // exactly when the target is running — and a synchronous remote stops
+    // reading stdin while it runs. Measured on hardware: every command of a
+    // reset sequence refused in turn while the tool reported success, leaving
+    // the core running in main.
+    //
+    //   [GDB] > (refused, target running) monitor reset
+    //   [GDB] > (refused, target running) monitor reset
+    const bridge = new FakeGdbBridge();
     await makeBackend(bridge).reset(true);
-    const writes = bridge.sent.filter((c) => c.includes("0xe000edfc ="));
-    assert.equal(writes.length, 2);
-    assert.match(writes[0], /0x1000011\b/, "should set bit 0 on top of the existing value");
-    assert.match(writes[1], /0x1000010\b/, "should restore exactly what was there");
+    assert.equal(bridge.interruptCount, 1, "must interrupt out-of-band before resetting");
+  });
+
+  test("reset(halt) passes an explicit strategy through", async () => {
+    // Type 1 resets the core via VECTRESET and leaves peripherals running,
+    // which is the difference between keeping a PLL locked and not.
+    const bridge = new FakeGdbBridge();
+    await makeBackend(bridge).reset(true, 1);
+    assert.equal(bridge.sent[0], "monitor reset 1");
   });
 
   test("reset(run) sends two separate commands, never one multi-line string", async () => {

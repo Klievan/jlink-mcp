@@ -1,5 +1,5 @@
 import { spawn } from "child_process";
-import { ProbeBackend, ProbeState, ProbeErrorCode, CommandResult, GDBServerInfo } from "./backend";
+import { ProbeBackend, ProbeState, ProbeErrorCode, CommandResult, GDBServerInfo, parseLittleEndian32 } from "./backend";
 import { ProcessManager } from "../utils/process-manager";
 import { log, logError, logRaw } from "../utils/logger";
 import * as path from "path";
@@ -327,42 +327,63 @@ export class JLinkBackend extends ProbeBackend {
     }
     return this.withPreflight("resume", () => this.execRaw(["go"]));
   }
-  async reset(halt = false): Promise<CommandResult> {
+  /**
+   * Reset the target, optionally leaving it stopped at the reset vector.
+   *
+   * This used to hand-roll a vector catch: set DEMCR.VC_CORERESET, reset,
+   * clear it. That was reinventing something J-Link already does, and doing
+   * it worse. Per SEGGER's reset-strategy reference, the default Cortex-M
+   * strategy (type 0) *is* a vector-catch reset — "the device should halt
+   * immediately after a reset (before it can execute any user-application
+   * instruction), which is ensured by setting the VC_CORERESET in the DEMCR"
+   * — and the GDB server documents `monitor reset` as "resets and halts the
+   * target CPU". Type 0 also lets J-Link pick the per-device sequence, which
+   * matters on parts whose reset needs vendor-specific handling; a hand-built
+   * sequence silently opts out of that.
+   *
+   *   https://kb.segger.com/J-Link_Reset_Strategies
+   *
+   * So the reset itself is J-Link's job. Ours is to check it actually
+   * happened — see verifyResetHalt. A reset that quietly does nothing (the
+   * probe owned by another process, say) otherwise reports success while the
+   * core keeps running, which is how this landed as "PC in main after
+   * reset(halt)" and got misread as a missing vector catch.
+   *
+   * @param strategy Optional J-Link reset type. Omit to let J-Link choose,
+   *   which SEGGER recommends. Type 1 resets the core only via VECTRESET and
+   *   leaves peripherals alone; type 2 drives the reset pin.
+   */
+  async reset(halt = false, strategy?: number): Promise<CommandResult> {
     if (this.useGdb()) {
       // Note on sequencing: each of these MUST be a separate `command()`
       // call. GDBClient writes the string straight to stdin and resolves on
       // the first result record, so a "cmd\ncmd" string leaves the second
       // response orphaned in the shared buffer, where it can satisfy the
       // *next* command's completion check and desync every reply after it.
+      const mon = strategy === undefined ? "monitor reset" : `monitor reset ${strategy}`;
+
+      // Halt first, because a reset is a recovery action and the moment you
+      // reach for one is precisely when the target is running.
+      //
+      // The J-Link GDB server is a synchronous remote: while the target runs
+      // it stops reading stdin, so every command typed at it is silently
+      // refused. Measured on hardware — an entire reset sequence refused
+      // command by command while the tool still reported success, leaving the
+      // core running in main and the PC wherever its delay loop had reached:
+      //
+      //   [GDB] > (refused, target running) monitor reset
+      //   [GDB] > (refused, target running) x/1wx 0xe000edfc
+      //   [GDB] > (refused, target running) monitor reset
+      //
+      // halt() goes out of band over SIGINT, which is the only channel a
+      // synchronous remote is still listening on.
+      await this.halt();
 
       if (halt) {
-        // `monitor reset` alone does not leave the core stopped at the reset
-        // vector. Measured on an nRF52840: after reset(halt) the CPU was
-        // running in main, and both GDB and JLinkExe agreed on the address —
-        // so this was the core genuinely running, not a stale register cache.
-        //
-        // Halting after the fact does not help either: by the time the halt
-        // lands the core has executed an arbitrary amount of startup, so the
-        // PC is wherever it happened to reach. To stop *at* the reset vector
-        // the core has to be told before it starts, which is what vector
-        // catch is for — DEMCR.VC_CORERESET (bit 0) halts the CPU on reset.
-        //
-        // Set it, reset, then clear it, so the target is not left with a
-        // debug trap armed for whoever runs next. Leaving debug state behind
-        // is its own long-running bug in this project's history.
-        const demcr = 0xe000edfc;
-        const before = await this.runViaGdb(`x/1wx 0x${demcr.toString(16)}`, 5000);
-        const prior = before.output.match(/0x([0-9a-fA-F]{1,8})\s*$/m)?.[1];
-        const priorValue = prior ? parseInt(prior, 16) : 0x01000000; // TRCENA
-
-        await this.runViaGdb(`set {unsigned int}0x${demcr.toString(16)} = 0x${(priorValue | 1).toString(16)}`, 5000);
-        const reset = await this.runViaGdb("monitor reset", 5000);
-        // Restore the caller's DEMCR, minus the catch we added.
-        await this.runViaGdb(`set {unsigned int}0x${demcr.toString(16)} = 0x${(priorValue & ~1).toString(16)}`, 5000);
-        return reset;
+        return this.verifyResetHalt(await this.runViaGdb(mon, 8000));
       }
 
-      const reset = await this.runViaGdb("monitor reset", 5000);
+      const reset = await this.runViaGdb(mon, 8000);
       if (!reset.success) return reset;
       const go = await this.runViaGdb("monitor go", 5000);
       return {
@@ -372,31 +393,71 @@ export class JLinkBackend extends ProbeBackend {
         error: go.error,
       };
     }
+
     // Reset doesn't need preflight — it IS the recovery action.
-    //
-    // `r` followed by `halt` does not stop at the reset vector: the core
-    // starts running the moment reset releases, and by the time `halt` lands
-    // it has executed an arbitrary amount of startup. Measured on an
-    // nRF52840 — reset(halt) left PC mid-firmware, and JLinkExe and GDB
-    // agreed on the address, so this was the core genuinely running rather
-    // than a stale register cache.
-    //
-    // Vector catch is how you stop it before it starts: DEMCR.VC_CORERESET
-    // (bit 0) halts the CPU on reset. Set it, reset, clear it — cleared
-    // because leaving a debug trap armed for the next session is a bug this
-    // project has already shipped once.
-    //
-    // TRCENA (bit 24) is preserved: J-Link sets it, and clearing it turns off
-    // the trace/debug block that DWT and the ITM depend on.
+    const setType = strategy === undefined ? [] : [`RSetType ${strategy}`];
     if (halt) {
-      return this.acquireLock(() => this.execRaw([
-        "w4 0xE000EDFC, 0x01000001",
-        "r",
-        "halt",
-        "w4 0xE000EDFC, 0x01000000",
-      ]));
+      // `r` halts on its own; there is no `halt` here on purpose. Adding one
+      // cannot help — if `r` stopped at the vector the halt is a no-op, and
+      // if it did not, halting late just parks the PC wherever startup had
+      // reached and makes a broken reset look like a working one.
+      return this.verifyResetHalt(await this.acquireLock(() => this.execRaw([...setType, "r"])));
     }
-    return this.acquireLock(() => this.execRaw(["r", "go"]));
+    return this.acquireLock(() => this.execRaw([...setType, "r", "go"]));
+  }
+
+  /** Read one 32-bit little-endian word, or null if the read did not land. */
+  private async readWord32(address: number): Promise<number | null> {
+    const r = await this.readMemory(address, 4);
+    if (!r.success) return null;
+    const bytes = this.parseMemoryDump(r.rawOutput).map((d) => d.hex).join(" ").split(/\s+/).filter(Boolean);
+    return bytes.length >= 4 ? parseLittleEndian32(bytes, 0) : null;
+  }
+
+  /**
+   * Confirm a halting reset actually left the core at the reset vector.
+   *
+   * The check is against the vector table the *target* is using — VTOR, then
+   * the word at VTOR+4 — rather than a hardcoded address, so it holds for
+   * bootloaders and relocated tables too. The Thumb bit is masked off, and a
+   * small window is allowed because some strategies stop a few instructions
+   * in.
+   *
+   * If anything needed for the check cannot be read, the original result is
+   * returned untouched. An unverifiable reset is not a failed one, and
+   * inventing a failure here would be the same class of lie as the silent
+   * success this exists to catch.
+   */
+  private async verifyResetHalt(reset: CommandResult): Promise<CommandResult> {
+    if (!reset.success) return reset;
+
+    const vtor = await this.readWord32(0xe000ed08);
+    if (vtor === null) return reset;
+    const vector = await this.readWord32((vtor & 0xffffff80) + 4);
+    if (vector === null || vector === 0 || vector === 0xffffffff) return reset;
+
+    const pcResult = await this.readRegister("PC");
+    const pc = parseInt(pcResult.output.match(/0x([0-9a-fA-F]+)/)?.[1] ?? "", 16);
+    if (!Number.isFinite(pc)) return reset;
+
+    const entry = vector & ~1;
+    if (pc >= entry && pc <= entry + 0x20) return reset;
+
+    return {
+      ...reset,
+      success: false,
+      errorCode: ProbeErrorCode.TARGET_UNREACHABLE,
+      error:
+        `Reset reported success but the core is at 0x${pc.toString(16)}, not the reset vector ` +
+        `0x${entry.toString(16)} (from VTOR 0x${vtor.toString(16)}). The reset did not take effect — ` +
+        `J-Link's default Cortex-M reset halts at the vector, so a PC elsewhere means the reset ` +
+        `never reached the target.`,
+      suggestedAction:
+        "Most often another process owns the probe (a GDB server or a second JLinkExe), so the " +
+        "reset command was accepted and discarded. Check for other J-Link processes, then retry. " +
+        "If the target needs a different reset strategy, pass one — see " +
+        "https://kb.segger.com/J-Link_Reset_Strategies",
+    };
   }
   async step(): Promise<CommandResult> {
     if (this.useGdb()) return this.runViaGdb("stepi", 5000);
