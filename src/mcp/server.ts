@@ -995,6 +995,12 @@ export class JLinkMcpServer {
       if (r.success) restored.push("GDB client");
       else failed.push(`GDB client (${r.error || r.output})`);
     }
+    if (!hadRtt) {
+      // Say it. RTT not being restored is invisible otherwise — the reply reads
+      // "Restored: GDB server, GDB client." and a caller has no way to tell
+      // whether RTT was deliberately absent or quietly dropped.
+      notes.push("RTT was not connected before this, so it was not restored.");
+    }
     if (hadRtt && !failed.length) {
       // Resume before reconnecting. The server just halted the core on attach,
       // and RTT connected to a halted target finds no control block and stays

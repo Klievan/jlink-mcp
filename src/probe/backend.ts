@@ -4,6 +4,8 @@
  * implements this interface. The MCP server calls only these methods.
  */
 
+import { log } from "../utils/logger";
+
 // ══════════════════════════════════════════════════════════════════════
 // State machine
 // ══════════════════════════════════════════════════════════════════════
@@ -130,8 +132,15 @@ export abstract class ProbeBackend {
 
   get rttConnected(): boolean { return this._rttConnected; }
   set rttConnected(v: boolean) {
-    // RTT can only be connected if GDB server is running
+    // RTT can only be connected if GDB server is running.
+    //
+    // This refusal is silent, and silence is why it is worth logging. The flag
+    // is what decides whether a flash restores RTT afterwards, so a discarded
+    // `= true` turns into "Restored: GDB server, GDB client." with RTT missing
+    // and nothing saying why — which is what S7 shows, three runs running,
+    // while two fixes aimed elsewhere changed nothing.
     if (v && this._state !== ProbeState.GDB_RUNNING) {
+      log(`[probe] refusing rttConnected = true: state is ${this._state}, not ${ProbeState.GDB_RUNNING}`);
       this._rttConnected = false;
       return;
     }
@@ -141,8 +150,9 @@ export abstract class ProbeBackend {
   /** Transition state with validation */
   protected setState(newState: ProbeState): void {
     this._state = newState;
-    // If we lose target attach, RTT is invalid
+    // If we lose target attach, RTT is invalid.
     if (newState === ProbeState.DISCONNECTED || newState === ProbeState.PROBE_CONNECTED) {
+      if (this._rttConnected) log(`[probe] clearing rttConnected: state -> ${newState}`);
       this._rttConnected = false;
     }
   }
