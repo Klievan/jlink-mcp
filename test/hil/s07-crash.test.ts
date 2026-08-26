@@ -59,14 +59,26 @@ describe("S7 — crash injection and diagnosis", { skip }, () => {
     assert.match(out, /DFSR=0x[0-9a-f]{8}/i);
   });
 
-  for (const trigger of ["crash:nullderef", "crash:unaligned", "crash:undefined", "crash:badaddr"]) {
-    test(`${trigger} produces a diagnosable fault`, async () => {
+  // Requested through memory, not RTT. The RTT command channel works, but it
+  // puts a whole subsystem between the test and the fault: when no fault
+  // happens, the cause could be the injection, the down channel, the
+  // control-block scan, or the target not running — and distinguishing those
+  // cost several hardware rounds. write_memory is one proven operation, so a
+  // crash that fails to happen now means the crash code is wrong, and nothing
+  // else.
+  const CRASH: Record<string, number> = {
+    nullderef: 1, unaligned: 2, undefined: 3, badaddr: 4,
+  };
+
+  for (const [name, code] of Object.entries(CRASH)) {
+    test(`crash:${name} produces a diagnosable fault`, async () => {
       await bootFixture();
-      await hil.expectOk("rtt_send", { data: `${trigger}\n` });
+      await withTargetHalted(hil, () =>
+        hil.expectOk("write_memory", { address: hex(sym("test_crash_request")), value: hex(code) }));
       await sleep(1000);
 
       const out = await hil.expectOk("diagnose_crash");
-      record(`hil-diagnose-${trigger.replace(":", "-")}.txt`, out);
+      record(`hil-diagnose-${name}.txt`, out);
 
       const regs = await hil.expectOk("read_registers");
       const pc = reg(regs, "PC");
@@ -85,7 +97,8 @@ describe("S7 — crash injection and diagnosis", { skip }, () => {
 
   test("the exception stack frame names the faulting instruction", async () => {
     await bootFixture();
-    await hil.expectOk("rtt_send", { data: "crash:badaddr\n" });
+    await withTargetHalted(hil, () =>
+      hil.expectOk("write_memory", { address: hex(sym("test_crash_request")), value: "0x4" }));
     await sleep(1000);
 
     const out = await hil.expectOk("diagnose_crash");
