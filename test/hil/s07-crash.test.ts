@@ -98,7 +98,7 @@ describe("S7 — crash injection and diagnosis", { skip }, () => {
   test("the exception stack frame names the faulting instruction", async () => {
     await bootFixture();
     await withTargetHalted(hil, () =>
-      hil.expectOk("write_memory", { address: hex(sym("test_crash_request")), value: "0x4" }));
+      hil.expectOk("write_memory", { address: hex(sym("test_crash_request")), value: "0x1" }));
     await sleep(1000);
 
     const out = await hil.expectOk("diagnose_crash");
