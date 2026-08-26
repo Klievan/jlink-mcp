@@ -40,6 +40,50 @@ describe("S6 — RTT logging and the down channel", { skip }, () => {
     await hil.stop();
   });
 
+  test("DIAGNOSTIC: what is the target actually doing", async () => {
+    // Three rounds of hypothesising about RTT silence is two too many. This
+    // records the whole picture in one place so the next run answers the
+    // question instead of narrowing it: is the firmware executing, did it
+    // build the RTT control block, and is the counter moving?
+    //
+    // Deliberately assertion-light — it fails only on the one thing that
+    // makes every other test in this suite meaningless.
+    const regs = await hil.expectOk("read_registers");
+    const pc = reg(regs, "PC");
+    const parts: string[] = [`PC=0x${pc?.toString(16)}`];
+
+    for (const [name, sym_] of [["Reset_Handler", "Reset_Handler"], ["main", "main"],
+                                ["Fault_Handler", "Fault_Handler"], ["_SEGGER_RTT", "_SEGGER_RTT"]] as const) {
+      parts.push(`${name}=0x${sym(sym_).toString(16)}`);
+    }
+
+    // Is the SEGGER ID actually in RAM? If rtt_init ran, the first 16 bytes
+    // of the control block spell "SEGGER RTT". If they are zero the firmware
+    // never got there; if they are garbage it is not running our image.
+    const cb = await hil.expectOk("read_memory", { address: hex(sym("_SEGGER_RTT")), length: 48 });
+    record("hil-rtt-controlblock.txt", cb);
+    parts.push(`control block:\n${cb}`);
+
+    // Does the counter move across a genuine run window?
+    await hil.expectOk("halt");
+    const c1 = word32(await hil.expectOk("read_memory", { address: hex(sym("test_counter")), length: 4 }));
+    const s1 = word32(await hil.expectOk("read_memory", { address: hex(sym("test_seq")), length: 4 }));
+    await hil.expectOk("resume");
+    await sleep(500);
+    await hil.expectOk("halt");
+    const c2 = word32(await hil.expectOk("read_memory", { address: hex(sym("test_counter")), length: 4 }));
+    const s2 = word32(await hil.expectOk("read_memory", { address: hex(sym("test_seq")), length: 4 }));
+    await hil.expectOk("resume");
+    parts.push(`test_counter: ${c1} -> ${c2}`, `test_seq: ${s1} -> ${s2}`);
+
+    const report = parts.join("\n");
+    record("hil-rtt-diagnostic.txt", report);
+
+    const ascii = (cb.match(/  ([ -~]+)\s*$/m) ?? [])[1] ?? "";
+    assert.ok(/SEGGER/.test(cb) || /SEGGER/.test(ascii),
+      `the RTT control block was never initialised — the firmware is not reaching rtt_init.\n${report}`);
+  });
+
   test("the boot banner arrives", async () => {
     const out = await hil.expectOk("rtt_read", { count: 50 });
     record("hil-rtt-boot.txt", out);
