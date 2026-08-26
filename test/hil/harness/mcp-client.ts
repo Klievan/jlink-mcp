@@ -164,6 +164,18 @@ export const ON_HIL_RUNNER = process.env.HIL === "1";
 // ── Parsing helpers ────────────────────────────────────────────────
 
 /**
+ * Format an address or value the way the MCP tools want it.
+ *
+ * read_memory / write_memory / flash take their addresses as *hex strings*,
+ * not numbers — `z.string()` in the schema, parsed with parseInt(x, 16) in the
+ * handler. Passing a number gets a -32602 validation error from the SDK before
+ * the tool ever runs.
+ */
+export function hex(n: number): string {
+  return "0x" + n.toString(16);
+}
+
+/**
  * Pull a named register out of the `read_registers` compact format
  * ("Core: PC=0x000004B2 SP=0x20002C40 ...").
  */

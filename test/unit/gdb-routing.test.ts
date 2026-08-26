@@ -106,6 +106,35 @@ describe("GDB routing — register name translation", () => {
   }
 });
 
+describe("J-Link register name translation", () => {
+  // The mirror of the GDB mapping above, for the JLinkExe path. J-Link names
+  // core registers architecturally and rejects the ARM mnemonics:
+  //   J-Link> rreg PC
+  //   Illegal register name.
+  // Two of read_register's own three documented examples ('PC', 'SP') hit
+  // that, observed on real hardware before this mapping existed.
+  const toJLink = (n: string) => (JLinkBackend as any).toJLinkRegName(n);
+  const cases: [string, string][] = [
+    ["PC", "R15"],
+    ["SP", "R13"],
+    ["LR", "R14"],
+    ["pc", "R15"],
+    ["R0", "R0"],
+    ["r0", "R0"],
+    ["MSP", "MSP"],
+    ["PSP", "PSP"],
+    ["XPSR", "XPSR"],
+    ["CONTROL", "CONTROL"],
+    ["$pc", "R15"],
+    ["  sp  ", "R13"],
+  ];
+  for (const [input, expected] of cases) {
+    test(`${JSON.stringify(input)} -> ${expected}`, () => {
+      assert.equal(toJLink(input), expected);
+    });
+  }
+});
+
 describe("GDB routing — when the bridge is unavailable", () => {
   test("no bridge means nothing is routed through GDB", async () => {
     // Without a GDB session there is no competing client, so the JLinkExe
