@@ -1,6 +1,6 @@
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { HilClient, ON_HIL_RUNNER, record, reg, word32, hex, FIXTURE_HEX } from "./harness/mcp-client";
+import { HilClient, ON_HIL_RUNNER, record, reg, word32, hex, FIXTURE_HEX, ensureFixtureRunning } from "./harness/mcp-client";
 import { repoRoot } from "../helpers";
 import * as path from "path";
 
@@ -140,7 +140,14 @@ describe("S2b — GDB session: halt, inspect, step are coherent", { skip }, () =
 
   before(async () => {
     await hil.start();
-    await hil.expectOk("flash", { filePath: FIXTURE_HEX });
+    // Do not inherit S2a's target state. If the fixture faulted there, a
+    // plain reset leaves the core parked in the trap and this whole suite
+    // fails for a reason that has nothing to do with GDB.
+    const recovery = await ensureFixtureRunning(hil, FIXTURE_HEX, FIXTURE.RESET_HANDLER);
+    record("hil-s02b-target-recovery.txt", recovery);
+    if (recovery.startsWith("RECOVERY FAILED")) {
+      throw new Error(`cannot start the GDB suite: ${recovery}`);
+    }
     await hil.expectOk("gdb_server_start");
     await sleep(1500);
     await hil.expectOk("gdb_connect");
