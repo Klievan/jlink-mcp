@@ -27,6 +27,13 @@ const skip = !gdbAvailable() && "arm-none-eabi-gdb not installed";
  * A mock cannot catch this. The bug lives in the timing and interleaving of
  * real MI output, so the test uses real MI output.
  */
+/*
+ * Every test here is bounded. The bug this suite guards — commands clobbering
+ * one another's pending slot — shows up as commands that never settle except
+ * on their own timeouts, so an unbounded test would hang CI rather than fail
+ * it. Verified by removing the queue: the suite stopped producing output
+ * entirely instead of reporting a failure.
+ */
 describe("GDB/MI response synchronisation", { skip }, () => {
   const client = new GDBClient();
   after(() => client.disconnect());
@@ -54,13 +61,13 @@ describe("GDB/MI response synchronisation", { skip }, () => {
     await new Promise((r) => setTimeout(r, 1200));
   }
 
-  test("a command returns its own output, not the startup banner", async () => {
+  test("a command returns its own output, not the startup banner", { timeout: 30_000 }, async () => {
     await startBare();
     const r = await client.command("print 1+1");
     assert.match(r.output, /\$\d+ = 2/, `got: ${JSON.stringify(r.output)}`);
   });
 
-  test("consecutive commands do not drift out of step", async () => {
+  test("consecutive commands do not drift out of step", { timeout: 30_000 }, async () => {
     await startBare();
     // The off-by-one signature: each reply is the previous command's. Running
     // several with distinct answers catches a drift of any size.
@@ -72,7 +79,7 @@ describe("GDB/MI response synchronisation", { skip }, () => {
     assert.match(c.output, /333/, `third reply: ${JSON.stringify(c.output)}`);
   });
 
-  test("no command returns empty output", async () => {
+  test("no command returns empty output", { timeout: 30_000 }, async () => {
     await startBare();
     for (const cmd of ["show version", "print 7", "info breakpoints"]) {
       const r = await client.command(cmd);
@@ -80,7 +87,7 @@ describe("GDB/MI response synchronisation", { skip }, () => {
     }
   });
 
-  test("errors are surfaced as errors, not as silence", async () => {
+  test("errors are surfaced as errors, not as silence", { timeout: 30_000 }, async () => {
     await startBare();
     // No target attached, so this must fail — and must say so. Returning an
     // empty success is the failure mode that made the hardware run look fine.
@@ -94,7 +101,25 @@ describe("GDB/MI response synchronisation", { skip }, () => {
       "'no registers now' should invalidate the session");
   });
 
-  test("a command issued right after another still matches its own reply", async () => {
+  test("concurrent commands each receive their own reply", { timeout: 30_000 }, async () => {
+    await startBare();
+    // Fired without awaiting in between — the shape an MCP server produces
+    // when two tool calls overlap. With a single pending slot and no queue,
+    // the later command overwrites the earlier one's resolver and the earlier
+    // one settles on timeout with whatever was in the buffer.
+    const results = await Promise.all([
+      client.command("print 4001"),
+      client.command("print 4002"),
+      client.command("print 4003"),
+      client.command("print 4004"),
+    ]);
+    results.forEach((r, i) => {
+      assert.match(r.output, new RegExp(`= ${4001 + i}\\b`),
+        `concurrent reply ${i} was ${JSON.stringify(r.output)}`);
+    });
+  });
+
+  test("a command issued right after another still matches its own reply", { timeout: 30_000 }, async () => {
     await startBare();
     // Back-to-back with no gap is where a prompt-based matcher drifts.
     const results = await Promise.resolve().then(async () => {

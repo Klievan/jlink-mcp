@@ -45,6 +45,17 @@ export class GDBClient {
     sawResult: boolean;
   } | null = null;
   private tokenCounter = 0;
+  /**
+   * Serializes `command()` calls.
+   *
+   * There is one `pending` slot and one output buffer, so two commands in
+   * flight at once clobber each other: the second overwrites the first's
+   * resolver, and the first only ever settles on its own timeout, with
+   * whatever happened to be in the buffer. MCP tool calls can genuinely
+   * overlap — and the probe backend's own lock does not cover the GDB path,
+   * which returns before `withPreflight` is ever reached.
+   */
+  private queue: Promise<unknown> = Promise.resolve();
   private stopEvent: string | null = null;
   private history: string[] = [];
   private maxHistory = 200;
@@ -168,6 +179,17 @@ export class GDBClient {
    * If the target doesn't stop in time, returns with a "target running" message.
    */
   async command(cmd: string, timeout: number = 15000): Promise<GDBResponse> {
+    // Queue rather than run concurrently. Settled either way so one failure
+    // does not poison every later command.
+    const run = this.queue.then(
+      () => this.commandUnqueued(cmd, timeout),
+      () => this.commandUnqueued(cmd, timeout)
+    );
+    this.queue = run.then(() => undefined, () => undefined);
+    return run;
+  }
+
+  private async commandUnqueued(cmd: string, timeout: number): Promise<GDBResponse> {
     // Auto-reconnect if connection dropped
     if ((!this.proc || !this.connected) && this.lastConnectParams) {
       log("[GDB] Connection lost, attempting auto-reconnect...");
