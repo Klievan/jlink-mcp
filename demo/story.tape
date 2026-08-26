@@ -10,9 +10,12 @@
 
 Output demo/jlink-mcp-demo.gif
 
-Set FontSize 15
-Set Width 1180
-Set Height 760
+# Sized so the compact register line — about 190 characters of real output —
+# fits without wrapping. Wrapping it three times is the difference between
+# "look how much this condenses" and "look at this mess".
+Set FontSize 13
+Set Width 1560
+Set Height 800
 Set Theme "Catppuccin Mocha"
 Set Padding 18
 Set TypingSpeed 45ms

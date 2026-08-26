@@ -32,6 +32,14 @@
 
 ## See it work
 
+<p align="center">
+  <img src="demo/jlink-mcp-demo.gif" alt="A terminal session: the MCP server finds the probe, flashes firmware, opens a debug session, streams RTT logs, injects a fault, and decodes the resulting HardFault — naming the faulting instruction." width="100%">
+</p>
+
+<p align="center">
+  <em>Real MCP tool calls against a real nRF52840-DK. Reproduce it yourself: <code>npm run demo</code></em>
+</p>
+
 Your firmware just crashed. One tool call:
 
 ```
