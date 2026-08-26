@@ -1066,6 +1066,20 @@ export class JLinkMcpServer {
     await sleep(500);
     await this.rttClient.connect();
     this.probe.rttConnected = true;
+
+    // Connecting our telnet client is not the same as the probe collecting.
+    // J-Link scans for the control block once, at its own moment, and after a
+    // flash — which resets the target — that scan can land while the firmware
+    // has not yet initialised the block. Nothing retries it. Measured after a
+    // flash: the firmware had written 490 bytes and the probe had collected
+    // none of them, so every read said "No RTT output yet" while the device
+    // was talking the whole time.
+    //
+    // Pointing it at a known address is not a retry of the scan; it replaces
+    // it. Best-effort, and silent when no address is configured, because the
+    // stream may well be fine — the scan usually does land.
+    await this.probe.restartRTT();
+
     return {
       resumed: resumed.success,
       note: resumed.success ? "" : " (warning: could not resume the target, so RTT may stay silent)",

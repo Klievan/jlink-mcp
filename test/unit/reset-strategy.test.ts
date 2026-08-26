@@ -176,3 +176,18 @@ describe("verification that cannot run", () => {
     assert.deepEqual(reads, [], "should not even attempt the read");
   });
 });
+
+describe("RTT collection is separate from the telnet client", () => {
+  // Connecting our client is not the same as the probe collecting. J-Link
+  // scans for the control block once, at its own moment, and after a flash —
+  // which resets the target — that scan can land before the firmware has
+  // initialised the block. Nothing retries it. Measured after a flash: 490
+  // bytes written by the firmware, none collected, every read reporting "No
+  // RTT output yet" while the device was talking the whole time.
+  test("restartRTT is a no-op that reports itself, not a throw, without an address", async () => {
+    const b = new JLinkBackend({ device: "NRF52840_XXAA" }, new ProcessManager());
+    const r = await b.restartRTT();
+    assert.equal(r.ok, false);
+    assert.ok(r.detail.length > 0, "must explain itself — this runs on the happy path");
+  });
+});
