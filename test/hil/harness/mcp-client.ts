@@ -171,6 +171,47 @@ export function hilRecover(args: string[] = []): string {
   }
 }
 
+/**
+ * Put the target back to running the fixture, power-cycling if it will not.
+ *
+ * Suites that need a live target call this instead of assuming the previous
+ * suite left one. A HardFault parked in the fixture's trap survives a plain
+ * reset — round 6 lost both halt/resume suites to a single faulted target,
+ * which told us nothing about the GDB path that the run was meant to
+ * exercise.
+ *
+ * The point is not to hide a fault: the suite that owns the assertion still
+ * reports it, with diagnostics. This only stops one suite's target state from
+ * deciding another suite's result.
+ *
+ * Returns a description of what it took, so the caller can surface whether
+ * recovery was needed.
+ */
+export async function ensureFixtureRunning(
+  hil: HilClient,
+  fixtureHex: string,
+  resetHandler: number,
+): Promise<string> {
+  const attempt = async (): Promise<number | null> => {
+    await hil.call("flash", { filePath: fixtureHex });
+    await hil.call("reset", { halt: true });
+    const regs = await hil.call("read_registers");
+    return reg(regs, "PC");
+  };
+
+  const pc = await attempt();
+  if (pc !== null && pc >= resetHandler && pc <= resetHandler + 0x10) return "target already healthy";
+
+  // A power cycle is the only thing that reliably clears a latched fault
+  // state; a reset alone leaves the core where it was.
+  const recovery = hilRecover(["--power-cycle"]);
+  const pc2 = await attempt();
+  if (pc2 !== null && pc2 >= resetHandler && pc2 <= resetHandler + 0x10) {
+    return `recovered by power cycle (PC was 0x${pc?.toString(16)})`;
+  }
+  return `RECOVERY FAILED: PC 0x${pc?.toString(16)} then 0x${pc2?.toString(16)}. ${recovery}`;
+}
+
 /** True when running against real hardware. Suites skip themselves otherwise. */
 export const ON_HIL_RUNNER = process.env.HIL === "1";
 
