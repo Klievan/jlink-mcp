@@ -452,13 +452,23 @@ It has caught bugs that had been shipping green, including:
 - `reset` reporting success while **doing nothing at all** — the GDB server is a
   synchronous remote and refuses commands while the target runs, so every
   command of the reset sequence was rejected in turn and the failure discarded
+- the session teardown that disarms debug hardware being **refused in its
+  entirety** for the same reason, and reporting "debug hardware disarmed"
+  regardless — the fix above is what made this one visible
+- a GDB server reported **running when it had already exited**, because startup
+  returned on the spawn without waiting to see whether it got the probe
+
+Every one of those reported success. That is the point of the hardware tier,
+and the reason the suites assert on parsed content rather than on the call
+having returned without error — a suite that checked for errors would have
+passed on all of them.
 
 Raw probe output captured during those runs is committed as golden transcripts,
 so a fast unit tier replays real device bytes in seconds on any machine —
 no probe required to catch a format regression.
 
 ```bash
-npm test          # ~230 tests, seconds, no hardware
+npm test          # ~231 tests, seconds, no hardware
 npm run test:hil  # hardware tier; needs HIL=1 and a probe
 ```
 
