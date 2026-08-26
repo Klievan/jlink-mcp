@@ -221,6 +221,14 @@ export function decodeFaultRegisters(cfsr: number, hfsr: number, mmfar: number, 
 /**
  * Executes J-Link Commander commands by spawning JLinkExe with a script.
  * Each call opens a new connection, runs the commands, and exits.
+ *
+ * `-ExitOnError 1` is deliberately omitted. J-Link's autoconnect flow
+ * prints an "Error: Failed to initialize DAP" line before a successful
+ * connect-under-reset fallback, and `-ExitOnError` treats that transient
+ * message as fatal, causing the script to be dropped before the user's
+ * commands run. Genuine failures are still surfaced via the stdout
+ * classification below and via the non-zero exit code when JLinkExe
+ * itself refuses to run.
  */
 export async function executeJLinkCommands(
   commands: string[],
@@ -237,7 +245,6 @@ export async function executeJLinkCommands(
     "-if", config.jlink.interface,
     "-speed", String(config.jlink.speed),
     "-autoconnect", "1",
-    "-ExitOnError", "1",
     "-NoGui", "1",
   ];
 
@@ -278,15 +285,27 @@ export async function executeJLinkCommands(
     });
 
     proc.on("exit", (code) => {
-      const success = code === 0;
+      let success = code === 0;
       if (!success) {
         logError(`JLink Commander exited with code ${code}`);
+      }
+      // Without -ExitOnError, JLinkExe may exit 0 even when the target
+      // could not be reached. Flag those cases explicitly so callers can
+      // still branch on `.success`.
+      const raw = stdout.toLowerCase();
+      let error: string | undefined = stderr || undefined;
+      if (raw.includes("inittarget() returned error") || raw.includes("could not connect") || raw.includes("cannot connect")) {
+        success = false;
+        error = error || "Target attach failed (see rawOutput for details).";
+      } else if (raw.includes("failed to open dll") || raw.includes("no j-link") || raw.includes("no emulators found")) {
+        success = false;
+        error = error || "No J-Link probe found.";
       }
       resolve({
         success,
         rawOutput: stdout,
         output: stripBoilerplate(stdout),
-        error: stderr || undefined,
+        error,
       });
     });
 
