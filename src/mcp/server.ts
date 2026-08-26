@@ -111,6 +111,7 @@ export class JLinkMcpServer {
       async () => {
         const guard = this.requireDevice();
         if (guard) return guard;
+        await this.ensureGdbSession();
         const steps: string[] = [];
 
         if (!probe.isGDBServerRunning()) {
@@ -158,6 +159,7 @@ export class JLinkMcpServer {
       async ({ rttLines }) => {
         const guard = this.requireDevice();
         if (guard) return guard;
+        await this.ensureGdbSession();
         const sections: string[] = [];
 
         const regResult = await probe.readAllRegisters();
@@ -202,6 +204,7 @@ export class JLinkMcpServer {
       async () => {
         const guard = this.requireDevice();
         if (guard) return guard;
+        await this.ensureGdbSession();
         const sections: string[] = ["## Crash Diagnosis"];
 
         const regResult = await probe.readAllRegisters();
@@ -275,6 +278,7 @@ export class JLinkMcpServer {
       async () => {
         const guard = this.requireDevice();
         if (guard) return guard;
+        await this.ensureGdbSession();
         const result = await probe.getDeviceInfo();
         const regs = probe.parseRegisters(result.rawOutput);
         if (regs) {
@@ -287,6 +291,7 @@ export class JLinkMcpServer {
     this.server.tool("halt", "Halt the target CPU", {},
       async () => {
         const g = this.requireDevice(); if (g) return g;
+        await this.ensureGdbSession();
         const r = await probe.halt();
         return { content: [{ type: "text", text: r.success ? "CPU halted" : `Failed: ${r.output}` }] };
       }
@@ -295,6 +300,7 @@ export class JLinkMcpServer {
     this.server.tool("resume", "Resume the target CPU", {},
       async () => {
         const g = this.requireDevice(); if (g) return g;
+        await this.ensureGdbSession();
         const r = await probe.resume();
         return { content: [{ type: "text", text: r.success ? "CPU resumed" : `Failed: ${r.output}` }] };
       }
@@ -304,6 +310,7 @@ export class JLinkMcpServer {
       { halt: z.boolean().optional().describe("Halt after reset (default: false)") },
       async ({ halt }) => {
         const g = this.requireDevice(); if (g) return g;
+        await this.ensureGdbSession();
         const r = await probe.reset(halt ?? false);
         return { content: [{ type: "text", text: r.success ? `Device reset${halt ? " (halted)" : " (running)"}` : `Failed: ${r.output}` }] };
       }
@@ -313,6 +320,7 @@ export class JLinkMcpServer {
       {},
       async () => {
         const g = this.requireDevice(); if (g) return g;
+        await this.ensureGdbSession();
         const r = await probe.step();
         const regs = probe.parseRegisters(r.rawOutput);
         if (regs) return { content: [{ type: "text", text: `Stepped. PC=${regs["PC"] || "?"} LR=${regs["LR"] || "?"} SP=${regs["SP"] || "?"}` }] };
@@ -331,6 +339,7 @@ export class JLinkMcpServer {
       },
       async ({ address, length }) => {
         const g = this.requireDevice(); if (g) return g;
+        await this.ensureGdbSession();
         const addr = parseInt(address, 16);
         if (isNaN(addr)) return { content: [{ type: "text", text: "Error: invalid hex address" }] };
         const r = await probe.readMemory(addr, length);
@@ -347,6 +356,7 @@ export class JLinkMcpServer {
       },
       async ({ address, value }) => {
         const g = this.requireDevice(); if (g) return g;
+        await this.ensureGdbSession();
         const addr = parseInt(address, 16), val = parseInt(value, 16);
         if (isNaN(addr) || isNaN(val)) return { content: [{ type: "text", text: "Error: invalid hex" }] };
         const r = await probe.writeMemory(addr, val);
@@ -361,6 +371,7 @@ export class JLinkMcpServer {
     this.server.tool("read_registers", "Read all CPU registers (compact format, FP only if non-zero).", {},
       async () => {
         const g = this.requireDevice(); if (g) return g;
+        await this.ensureGdbSession();
         const r = await probe.readAllRegisters();
         const regs = probe.parseRegisters(r.rawOutput);
         if (regs) return { content: [{ type: "text", text: probe.formatRegistersCompact(regs) }] };
@@ -372,6 +383,7 @@ export class JLinkMcpServer {
       { register: z.string().describe("Register name (e.g., 'PC', 'SP', 'R0')") },
       async ({ register }) => {
         const g = this.requireDevice(); if (g) return g;
+        await this.ensureGdbSession();
         const r = await probe.readRegister(register);
         return { content: [{ type: "text", text: JLinkMcpServer.resultText(r, "Could not read register") }] };
       }
@@ -417,13 +429,15 @@ export class JLinkMcpServer {
       async ({ address }) => {
         const addr = parseInt(address, 16);
         const g = this.requireDevice(); if (g) return g;
+        await this.ensureGdbSession();
         const r = await probe.setBreakpoint(addr);
         return { content: [{ type: "text", text: r.success ? `Breakpoint set at 0x${addr.toString(16)}` : `Failed: ${r.output}` }] };
       }
     );
 
     this.server.tool("clear_breakpoints", "Clear all breakpoints", {},
-      async () => { const g = this.requireDevice(); if (g) return g; await probe.clearBreakpoints(); return { content: [{ type: "text", text: "Breakpoints cleared" }] }; }
+      async () => { const g = this.requireDevice(); if (g) return g;
+        await this.ensureGdbSession(); await probe.clearBreakpoints(); return { content: [{ type: "text", text: "Breakpoints cleared" }] }; }
     );
 
     // ═══════════════════════════════════════════════════════════════
@@ -431,7 +445,8 @@ export class JLinkMcpServer {
     // ═══════════════════════════════════════════════════════════════
 
     this.server.tool("gdb_server_start", `Start ${probe.displayName} GDB server`, {},
-      async () => { const g = this.requireDevice(); if (g) return g; const r = await probe.startGDBServer(); return { content: [{ type: "text", text: r.message }] }; }
+      async () => { const g = this.requireDevice(); if (g) return g;
+        await this.ensureGdbSession(); const r = await probe.startGDBServer(); return { content: [{ type: "text", text: r.message }] }; }
     );
 
     this.server.tool("gdb_server_stop", `Stop ${probe.displayName} GDB server and disconnect RTT`, {},
@@ -467,6 +482,7 @@ export class JLinkMcpServer {
         // Auto-start GDB server if not running
         if (!probe.isGDBServerRunning()) {
           const g = this.requireDevice(); if (g) return g;
+        await this.ensureGdbSession();
           const startResult = await probe.startGDBServer();
           if (!startResult.success) return { content: [{ type: "text", text: `Failed to start GDB server: ${startResult.message}` }] };
           await sleep(2000); // Wait for server to bind port
@@ -644,6 +660,7 @@ export class JLinkMcpServer {
       { commands: z.array(z.string()).describe("Commands to execute") },
       async ({ commands }) => {
         const g = this.requireDevice(); if (g) return g;
+        await this.ensureGdbSession();
         const r = await probe.executeRaw(commands);
         return { content: [{ type: "text", text: JLinkMcpServer.resultText(r, "(no output)") }] };
       }
@@ -779,6 +796,35 @@ export class JLinkMcpServer {
       notes.push(`COULD NOT RESTORE: ${failed.join("; ")}. Reconnect with gdb_connect before debugging further.`);
     }
     return [result.text, ...notes].join("\n");
+  }
+
+  /**
+   * Attach our GDB client when the server is running without one.
+   *
+   * The J-Link GDB Server halts the core on attach and holds it, and it also
+   * hosts the RTT telnet port — so anything using RTT needs the server up.
+   * But CPU-control routing keys off whether a *client* is connected, so a
+   * server with no client is the one configuration where every halt, reset,
+   * step and read spawns a competing JLinkExe and evicts the server. RTT dies
+   * with it, and the target is left halted with nothing driving it.
+   *
+   * That is reachable from the documented happy path: start_debug_session
+   * brings up the server and RTT, and the next reset kills the stream.
+   *
+   * Connecting a client puts everything back on one channel. The alternative
+   * — bracketing each call with a server stop and restart, as flash does —
+   * would drop the RTT stream on every single control operation, which is a
+   * worse answer to the same question.
+   */
+  private async ensureGdbSession(): Promise<void> {
+    if (!this.probe.isGDBServerRunning()) return;
+    if (this.gdb.isConnected()) return;
+    try {
+      await this.gdb.connect("localhost", this.probe.getGDBServerStatus().gdbPort);
+    } catch {
+      // Best-effort. If it fails the caller still gets the JLinkExe path,
+      // which is the behaviour they had before.
+    }
   }
 
   private registerResources(): void {

@@ -29,6 +29,9 @@ describe("S7 — crash injection and diagnosis", { skip }, () => {
   async function bootFixture() {
     await hil.expectOk("flash", { filePath: RTT_FIXTURE_HEX });
     await hil.expectOk("reset", { halt: false });
+    // The GDB server holds the core halted from its attach; reset alone does
+    // not necessarily leave it running.
+    await hil.expectOk("resume");
     await sleep(800);
   }
 

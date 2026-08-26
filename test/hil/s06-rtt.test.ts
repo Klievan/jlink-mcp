@@ -23,7 +23,11 @@ describe("S6 — RTT logging and the down channel", { skip }, () => {
     await hil.expectOk("gdb_server_start");
     await sleep(1500);
     await hil.expectOk("rtt_connect");
+    // The server halts the core on attach and holds it. Reset then resume so
+    // the fixture is actually executing — otherwise RTT is connected to a
+    // target that never produces a line, which reads as "RTT is broken".
     await hil.expectOk("reset", { halt: false });
+    await hil.expectOk("resume");
     await sleep(1500); // let the boot banner land
   });
 
@@ -103,6 +107,26 @@ describe("S6 — RTT logging and the down channel", { skip }, () => {
     await sleep(300);
     const b = word32(await hil.expectOk("read_memory", { address: hex(sym("test_counter")), length: 4 }));
     assert.notEqual(a, b, "counter frozen — RTT polling should not stall the target");
+  });
+
+  test("a reset does not kill the RTT stream", async () => {
+    // The bug this suite walked into. The GDB server hosts the RTT telnet
+    // port, but CPU-control routing keyed off whether a GDB *client* was
+    // attached — so with a server up and no client, reset spawned a competing
+    // JLinkExe, evicted the server, and took RTT down with it. Silent, and
+    // reachable straight from start_debug_session.
+    await hil.expectOk("rtt_clear");
+    await hil.expectOk("reset", { halt: false });
+    await hil.expectOk("resume");
+    await sleep(1500);
+
+    const out = await hil.expectOk("rtt_read", { count: 50 });
+    record("hil-rtt-after-reset.txt", out);
+    assert.match(out, /fixture ready/,
+      `RTT produced nothing after a reset — the server was probably evicted: ${JSON.stringify(out.slice(0, 200))}`);
+
+    // And the server should still be up to have served it.
+    assert.match(await hil.expectOk("gdb_server_status"), /"running": true/);
   });
 
   test("disconnect and reconnect works", async () => {
