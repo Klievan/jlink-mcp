@@ -249,6 +249,28 @@ describe("S2b — GDB session: halt, inspect, step are coherent", { skip }, () =
     assert.equal(reg(regs, "SP"), FIXTURE.INITIAL_MSP);
   });
 
+  test("flashing during a session takes it down and puts it back", async () => {
+    // flash must spawn JLinkExe — GDB cannot write a .hex — and a J-Link
+    // serves one client at a time, so this used to evict the GDB server
+    // silently. The child GDB stayed alive attached to a dead socket and the
+    // caller only found out several commands later.
+    const out = await hil.expectOk("flash", { filePath: FIXTURE_HEX });
+    record("hil-flash-during-gdb-session.txt", out);
+
+    assert.match(out, /Flashed/, `flash itself failed: ${out}`);
+    assert.match(out, /Stopped the GDB session/i, "the teardown should be reported, not silent");
+    assert.match(out, /Restored:.*GDB/i, `session not restored: ${out}`);
+    assert.ok(!/COULD NOT RESTORE/i.test(out), `restore failed: ${out}`);
+
+    // And the restored session must actually work, not merely claim to.
+    await hil.expectOk("halt");
+    const regs = await hil.expectOk("read_registers");
+    assert.match(regs, /Core:.*PC=/s, `session unusable after flash: ${regs}`);
+    const probeCmd = await hil.expectOk("gdb_command", { command: "info registers pc" });
+    assert.ok(!/not supported by this target|Remote connection closed|no registers/i.test(probeCmd),
+      `GDB session dead after flash: ${probeCmd}`);
+  });
+
   test("the GDB session survives a full inspect sequence", async () => {
     // The bug the routing work exists to prevent: a CPU-control tool spawning
     // JLinkExe alongside the GDB server evicts the server's session, leaving
