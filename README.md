@@ -24,9 +24,53 @@
   <a href="https://marketplace.visualstudio.com/items?itemName=Klievan.jlink-mcp"><img src="https://img.shields.io/visual-studio-marketplace/v/Klievan.jlink-mcp?style=flat-square&label=VSCode" alt="VSCode Marketplace"></a>
   <a href="https://smithery.ai/server/@Klievan/jlink-mcp"><img src="https://smithery.ai/badge/@Klievan/jlink-mcp" alt="Smithery"></a>
   <a href="https://modelcontextprotocol.io"><img src="https://img.shields.io/badge/MCP-Compatible-green?style=flat-square" alt="MCP Compatible"></a>
+  <a href="https://github.com/Klievan/jlink-mcp/actions/workflows/ci.yml"><img src="https://github.com/Klievan/jlink-mcp/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/Klievan/jlink-mcp/actions/workflows/hil.yml"><img src="https://img.shields.io/badge/tested%20on-real%20nRF52840-brightgreen?style=flat-square" alt="Hardware tested"></a>
 </p>
 
 ---
+
+## See it work
+
+Your firmware just crashed. One tool call:
+
+```
+> diagnose_crash
+
+## Crash Diagnosis
+
+### CPU State
+Core: PC=0x000000B8 SP=0x2003FFA8 R0=0x0000000A R1=0x000007FF R2=0x00000001 ...
+Status: XPSR=0x21000003 CONTROL=0x00000000 PRIMASK=0x00000000 ...
+Stack: MSP=0x2003FFA8 PSP=0x00000000
+
+⚠ CPU is in exception handler (IPSR=0x00000003)
+
+### Fault Registers
+CFSR=0x01000000 HFSR=0x40000000 DFSR=0x00000000 MMFAR=0xe000edf8 BFAR=0xe000edf8
+
+### Decoded Faults
+## UsageFault (UFSR):
+  - UNALIGNED: Unaligned memory access
+## HardFault (HFSR):
+  - FORCED: Forced HardFault (escalated from configurable fault)
+
+### Exception Stack Frame
+  R0    = 0x0000000A     R1  = 0x000007FF
+  R12   = 0x00000000     LR  = 0x000001F5
+  PC    = 0x00000254     xPSR = 0x21000000
+
+→ Faulting instruction at PC=0x00000254
+
+### Recent Errors/Warnings from RTT
+  [WRN] sensor_drv: sample out of range, clamping seq=2
+```
+
+Fault decoded, exception frame unwound, faulting instruction named, and the
+device's own log correlated — from one call, without a human reading a
+datasheet to find out what bit 24 of CFSR means.
+
+*Verbatim output from an nRF52840-DK in this project's hardware test suite.*
 
 ## What is this?
 
@@ -102,7 +146,7 @@ npm run compile
 JLINK_DEVICE=nRF52840_XXAA node out/mcp/standalone.js
 ```
 
-## Tools (31)
+## Tools (39)
 
 ### Workflow Tools (start here)
 
@@ -111,6 +155,14 @@ JLINK_DEVICE=nRF52840_XXAA node out/mcp/standalone.js
 | `start_debug_session` | **One-call setup.** Starts GDB server + connects RTT + returns boot log. |
 | `snapshot` | Captures full device state: registers, fault status, stack dump, RTT output. |
 | `diagnose_crash` | Auto-reads and decodes ARM Cortex-M fault registers (CFSR, HFSR, MMFAR, BFAR) with exception stack frame. |
+
+### Device Setup
+
+| Tool | Description |
+|------|-------------|
+| `list_devices` | Scan for connected probes and show the configured target |
+| `set_device` | Change the target device at runtime — no restart needed |
+| `get_config` | Current probe, target device, and GDB server state |
 
 ### Device Control
 
@@ -152,6 +204,20 @@ JLINK_DEVICE=nRF52840_XXAA node out/mcp/standalone.js
 | `gdb_server_start` | Start probe's GDB server |
 | `gdb_server_stop` | Stop GDB server + disconnect RTT |
 | `gdb_server_status` | GDB server, RTT, and proxy status |
+
+### Source-Level Debugging
+
+Attach a real GDB client for symbol-aware work — backtraces, variable
+inspection, and stepping by source line rather than by instruction.
+
+| Tool | Description |
+|------|-------------|
+| `gdb_connect` | Attach a GDB client (auto-starts the server; optional ELF for symbols) |
+| `gdb_load` | Load an ELF for debug symbols, optionally flashing it too |
+| `gdb_backtrace` | Call stack, optionally with locals in each frame |
+| `gdb_command` | Run any GDB command — `print sensor_state`, `info threads`, `break main` |
+| `gdb_wait` | Wait for the target to stop (after a continue or a breakpoint) |
+| `gdb_disconnect` | Detach the client, clearing breakpoints and debug hardware |
 
 ### RTT (Real-Time Transfer)
 
@@ -268,15 +334,83 @@ src/
 
 ## Design Decisions (LLM-Optimized)
 
-This server was built by having an AI use it against real hardware, then fixing every friction point:
+This server was built by having an AI use it against real hardware, then fixing every friction point.
 
-- **Output parsing** strips 40+ lines of J-Link connection banners. Only data comes back.
-- **Registers** are compact: `Core: PC=0xBF54 SP=0x20062880 ...` instead of 65 raw lines.
+### What `read_registers` would give you
+
+Raw `JLinkExe` output for `halt; regs` — **77 lines**, of which about six carry
+information. Every token here costs context, and the register values are buried
+in the middle:
+
+```
+SEGGER J-Link Commander V9.70 (Compiled Aug 19 2026 12:16:13)
+DLL version V9.70, compiled Aug 19 2026 12:15:25
+Connecting to J-Link ...O.K.
+Firmware: J-Link OB-nRF5340-NordicSemi compiled Jun 11 2026 13:12:28
+Hardware version: V1.00
+J-Link uptime (since boot): 0d 00h 34m 29s
+S/N: 1050298247
+License(s): RDI, FlashBP, FlashDL, JFlash, GDB
+...30 more lines of connect banner...
+PC = 00000044, CycleCnt = 00EB67E5
+R0 = 20000000, R1 = 9D56C547, R2 = 00000000, R3 = 00000000
+...
+FPS0 = 00000000, FPS1 = 00000000, FPS2 = 00000000, FPS3 = 00000000
+...28 more lines of zeroed FP registers...
+```
+
+### What it actually gives you
+
+**Three lines.** Same information, grouped by what you would ask for:
+
+```
+Core: PC=0x00000046 SP=0x20010000 R0=0x20000000 R1=0x01D43416 R2=0x00000000 ...
+Status: XPSR=0x01000000 CONTROL=0x00000000 PRIMASK=0x00000000 BASEPRI=0x00000000
+Stack: MSP=0x20010000 PSP=0x00000000
+```
+
+Both captured from the same board. The rest of the design follows the same rule
+— return what was asked for, and nothing else:
+
+- **Output parsing** strips the connection banner. Only data comes back.
+- **Registers** are compact and grouped (core / status / stack).
 - **FP registers** only shown if non-zero (they're usually all zeros).
 - **RTT output** has ANSI escape codes stripped and Zephyr log format parsed into structured fields.
 - **Composite tools** (`start_debug_session`, `snapshot`, `diagnose_crash`) replace multi-step workflows with single calls.
 - **Fault decoding** is automatic — reads CFSR/HFSR/MMFAR/BFAR and explains each bit.
 - **`rtt_search`** lets you find errors without reading the entire log.
+
+## Verified on real hardware
+
+Most of what can go wrong between an LLM and a debug probe fails *quietly*: a
+tool returns success with an empty payload, a parser drops half a line, a
+session dies and the next command reports something plausible instead. None of
+that is visible from reading the code, and a test suite that asserts "the call
+did not error" passes on all of it.
+
+So this project runs a hardware tier: **58 tests against a real nRF52840-DK**
+on a self-hosted runner, driving the actual MCP server over stdio exactly as a
+client would. It covers probe discovery, flash and verify, halt/step/resume
+under a live GDB session, memory and peripheral reads, RTT streaming and
+filtering, and crash diagnosis against faults injected on demand.
+
+It has caught bugs that had been shipping green, including:
+
+- `diagnose_crash` reporting **"No faults detected" during real crashes** — the
+  memory-dump parser was dropping half of every line
+- **every GDB-routed tool returning empty output** while the server reported
+  itself healthy
+- sessions leaving the target **unbootable**, with breakpoint comparators still
+  armed that no reset clears
+
+Raw probe output captured during those runs is committed as golden transcripts,
+so a fast unit tier replays real device bytes in seconds on any machine —
+no probe required to catch a format regression.
+
+```bash
+npm test          # ~190 tests, seconds, no hardware
+npm run test:hil  # hardware tier; needs HIL=1 and a probe
+```
 
 ## Environment Variables
 
