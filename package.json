@@ -1,7 +1,7 @@
 {
   "name": "jlink-mcp",
   "displayName": "jlink-mcp",
-  "description": "MCP server for SEGGER J-Link debug probes \u2014 LLM-driven embedded debugging with RTT, GDB server, and Trice/Pigweed support",
+  "description": "MCP server for SEGGER J-Link debug probes — LLM-driven embedded debugging with RTT, GDB server, and Trice/Pigweed support",
   "repository": {
     "type": "git",
     "url": "https://github.com/Klievan/jlink-mcp"
@@ -10,7 +10,7 @@
   "bugs": {
     "url": "https://github.com/Klievan/jlink-mcp/issues"
   },
-  "version": "0.4.0",
+  "version": "0.5.0",
   "publisher": "Klievan",
   "icon": "logo.png",
   "license": "MIT",
@@ -223,7 +223,7 @@
         "jlinkMcp.rtt.controlBlockAddress": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Address of the SEGGER RTT control block (your firmware's `_SEGGER_RTT` symbol), e.g. `0x20000000`. J-Link locates this by scanning RAM and never reports it back, so supplying it is what allows RTT to be recovered after a target reset \u2014 without it, collection stops at the first reset and every later read looks like a quiet target."
+          "markdownDescription": "Address of the SEGGER RTT control block (your firmware's `_SEGGER_RTT` symbol), e.g. `0x20000000`. J-Link locates this by scanning RAM and never reports it back, so supplying it is what allows RTT to be recovered after a target reset — without it, collection stops at the first reset and every later read looks like a quiet target."
         }
       }
     },

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.0
 
 Another hardware round, and another set of operations that reported success
 while doing nothing. Each one here was hidden behind the one before it: fixing
