@@ -62,6 +62,10 @@ jobs:
           HIL: "1"
           HIL_RECORD: ${{ inputs.record && '1' || '0' }}
           JLINK_DEVICE: NRF52840_XXAA
+          # Emit raw probe/GDB output so the run's log carries the exact text
+          # the parsers consume. That is the layer the unit tier replays, and
+          # it is not recoverable from tool output, which is already parsed.
+          JLINK_MCP_LOG_RAW: "1"
         run: npm run test:hil
 
       - name: Captured transcripts and server logs

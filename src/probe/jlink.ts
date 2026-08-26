@@ -1,7 +1,7 @@
 import { spawn } from "child_process";
 import { ProbeBackend, ProbeState, ProbeErrorCode, CommandResult, GDBServerInfo } from "./backend";
 import { ProcessManager } from "../utils/process-manager";
-import { log, logError } from "../utils/logger";
+import { log, logError, logRaw } from "../utils/logger";
 import * as path from "path";
 import * as fs from "fs";
 
@@ -140,6 +140,7 @@ export class JLinkBackend extends ProbeBackend {
       });
       proc.on("exit", (code) => {
         clearTimeout(timer);
+        logRaw("jlink", commands.join("; "), stdout);
         if (code !== 0) logError(`J-Link exited with code ${code}`);
         const result: CommandResult = { success: code === 0, rawOutput: stdout, output: stripBoilerplate(stdout), error: stderr || undefined };
         // Classify failures from stdout. Since -ExitOnError is no longer
