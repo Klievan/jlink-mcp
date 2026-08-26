@@ -49,12 +49,23 @@ clean question about RTT, which a diagnostic answered in a single run.
   handling. Backends with no numeric reset types refuse an explicit strategy
   rather than quietly resetting some other way.
 
+- **An assignment that was silently discarded** took RTT out for the rest of a
+  session. `rttConnected` decides whether a flash restores RTT afterwards, and
+  its setter refused the assignment unless a state enum read `GDB_RUNNING` —
+  but that enum covers both "the target is attached" and "the server is up",
+  and any probe-CLI call runs a preflight that sets `TARGET_ATTACHED`. RTT
+  connects just after a resume, which is such a call, so the refusal landed on
+  the following line every time. The guard now asks whether a GDB server is
+  running, which is the actual rule: the server hosts the RTT port.
+
 ### Added
 
 - **`JLINK_RTT_ADDR`** / `jlinkMcp.rtt.controlBlockAddress` — the address of
   your firmware's `_SEGGER_RTT` symbol. J-Link locates the control block by
   scanning RAM and never reports the address back, so supplying it is what
   allows RTT to survive a reset.
+- **Reset strategy selection** on the `reset` tool, and a postcondition check
+  on `reset(halt)` that follows VTOR to the reset vector.
 
 ## 0.4.0
 
