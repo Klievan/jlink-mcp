@@ -92,7 +92,16 @@ export class BlackMagicBackend extends ProbeBackend {
 
   async halt(): Promise<CommandResult> { return this.gdbExec(["monitor halt"]); }
   async resume(): Promise<CommandResult> { return this.gdbExec(["continue &"]); }
-  async reset(halt = false): Promise<CommandResult> {
+  async reset(halt = false, strategy?: number): Promise<CommandResult> {
+    // Refuse rather than silently reset a different way — see ProbeBackend.reset.
+    if (strategy !== undefined) {
+      return {
+        success: false,
+        rawOutput: "",
+        output: "",
+        error: `Reset strategies are a J-Link concept; the Black Magic Probe backend has no strategy ${strategy}. Black Magic Probe exposes reset through GDB's own reset handling; it has no numeric reset types.`,
+      };
+    }
     return this.gdbExec([halt ? "monitor reset halt" : "monitor reset"]);
   }
   async step(): Promise<CommandResult> { return this.gdbExec(["stepi"]); }
