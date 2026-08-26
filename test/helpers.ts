@@ -9,7 +9,7 @@ import { ProbeBackend, ProbeType, CommandResult, GDBServerInfo, GdbBridge } from
  * drift. Walk up to the package root instead so this resolves the same way
  * whether the caller is compiled or not.
  */
-function repoRoot(start: string): string {
+export function repoRoot(start: string = __dirname): string {
   let dir = start;
   while (!fs.existsSync(path.join(dir, "package.json"))) {
     const parent = path.dirname(dir);
