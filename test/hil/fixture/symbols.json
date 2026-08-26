@@ -4,11 +4,12 @@
   "lvl1": "0x000000a8",
   "lvl2": "0x00000098",
   "lvl3": "0x0000007c",
-  "main": "0x00000224",
-  "Reset_Handler": "0x00000484",
+  "main": "0x000002a8",
+  "Reset_Handler": "0x00000504",
   "test_counter": "0x200000cc",
-  "test_depth": "0x200000d0",
-  "test_marker": "0x200000d4",
-  "test_marker_fn": "0x00000210",
-  "test_seq": "0x200000d8"
+  "test_crash_request": "0x200000d0",
+  "test_depth": "0x200000d4",
+  "test_marker": "0x200000d8",
+  "test_marker_fn": "0x00000294",
+  "test_seq": "0x200000dc"
 }

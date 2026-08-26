@@ -26,7 +26,7 @@ NM=${NM:-arm-none-eabi-nm}
   BEGIN { print "{" }
   {
     name = $3
-    if (name ~ /^(test_counter|test_seq|test_marker|test_depth|test_marker_fn|lvl1|lvl2|lvl3|main|Reset_Handler|Fault_Handler|_SEGGER_RTT)$/) {
+    if (name ~ /^(test_counter|test_seq|test_marker|test_depth|test_crash_request|test_marker_fn|lvl1|lvl2|lvl3|main|Reset_Handler|Fault_Handler|_SEGGER_RTT)$/) {
       if (seen[name]++) next
       if (n++) printf ",\n"
       printf "  \"%s\": \"0x%s\"", name, $1

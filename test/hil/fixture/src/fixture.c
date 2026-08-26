@@ -65,6 +65,20 @@ volatile uint32_t test_seq;       /* log sequence number; gaps mean drops */
 volatile uint32_t test_marker;    /* set by test_marker_fn */
 volatile uint32_t test_depth;     /* call depth reached by the lvl chain */
 
+/*
+ * Crash request, written by the debugger rather than sent over RTT.
+ *
+ * The RTT command channel works, but it puts an entire subsystem between the
+ * test and the fault it wants to observe: if no fault happens, the cause could
+ * be the injection, the down channel, the control-block scan, or the target
+ * not running. write_memory is a single proven operation, so a crash that
+ * fails to happen means the crash code is wrong and nothing else.
+ *
+ * Values match the crash_* handlers; the main loop clears it before faulting
+ * so a reset does not re-trigger the same crash forever.
+ */
+volatile uint32_t test_crash_request;
+
 static void rtt_init(void)
 {
     _SEGGER_RTT.MaxNumUpBuffers = 1;
@@ -256,6 +270,18 @@ int main(void)
     for (;;) {
         test_counter++;
         poll_down_channel();
+
+        if (test_crash_request) {
+            uint32_t req = test_crash_request;
+            test_crash_request = 0; /* so a reset does not re-crash forever */
+            switch (req) {
+                case 1: crash_nullderef(); break;
+                case 2: crash_unaligned(); break;
+                case 3: crash_undefined(); break;
+                case 4: crash_badaddr(); break;
+                default: log_line("wrn", "hil_fixture", "unknown crash request"); break;
+            }
+        }
         if ((test_counter & 0x0007FFFF) == 0) {
             log_line("inf", "hil_fixture", "heartbeat");
         }
