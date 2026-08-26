@@ -133,11 +133,13 @@ export class JLinkBackend extends ProbeBackend {
       proc.stdin?.end();
 
       proc.on("error", (err) => {
+        clearTimeout(timer);
         logError("J-Link spawn error", err);
         this.setState(ProbeState.DISCONNECTED);
         resolve({ success: false, rawOutput: stdout, output: stdout, error: `Failed to spawn JLinkExe: ${err.message}`, errorCode: ProbeErrorCode.PROBE_NOT_FOUND });
       });
       proc.on("exit", (code) => {
+        clearTimeout(timer);
         if (code !== 0) logError(`J-Link exited with code ${code}`);
         const result: CommandResult = { success: code === 0, rawOutput: stdout, output: stripBoilerplate(stdout), error: stderr || undefined };
         // Classify failures from stdout. Since -ExitOnError is no longer
@@ -160,7 +162,11 @@ export class JLinkBackend extends ProbeBackend {
         resolve(result);
       });
 
-      setTimeout(() => {
+      // Cleared on both exit and error. Left pending, this timer keeps the
+      // event loop alive for a further 30s after every single J-Link
+      // command, delaying process shutdown and holding the closure (and
+      // the dead child handle) live for that whole window.
+      const timer = setTimeout(() => {
         proc.kill("SIGTERM");
         resolve({ success: false, rawOutput: stdout, output: stripBoilerplate(stdout), error: "J-Link timed out after 30s", errorCode: ProbeErrorCode.TIMEOUT });
       }, 30000);

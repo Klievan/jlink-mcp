@@ -15,3 +15,7 @@ CLAUDE.md
 **/*.map
 **/*.d.ts
 **/*.d.ts.map
+test/**
+out-test/**
+tsconfig.test.json
+.github/**

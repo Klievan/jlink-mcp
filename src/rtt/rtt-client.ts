@@ -3,12 +3,12 @@ import { EventEmitter } from "events";
 import { log, logError } from "../utils/logger";
 
 /** Strip ANSI escape sequences from text */
-function stripAnsi(text: string): string {
+export function stripAnsi(text: string): string {
   return text.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, "").replace(/\[0m/g, "");
 }
 
 /** Check if a line is SEGGER RTT header boilerplate */
-function isRttHeader(line: string): boolean {
+export function isRttHeader(line: string): boolean {
   return (
     line.startsWith("SEGGER J-Link") ||
     line.startsWith("Process: JLink") ||
@@ -30,7 +30,7 @@ export interface ParsedLogLine {
 }
 
 /** Parse a Zephyr-style log line: [HH:MM:SS.mmm,uuu] <level> module: message */
-function parseZephyrLog(line: string): ParsedLogLine {
+export function parseZephyrLog(line: string): ParsedLogLine {
   const match = line.match(
     /^\[(\d{2}:\d{2}:\d{2}\.\d{3},?\d{0,3})\]\s*<(\w+)>\s*(\w[\w._-]*):\s*(.*)$/
   );
@@ -99,42 +99,7 @@ export class RTTClient extends EventEmitter {
       });
 
       this.socket.on("data", (data: Buffer) => {
-        const raw = data.toString();
-        // Clean and split into lines, handling partial lines
-        const cleaned = stripAnsi(raw);
-        this.lineBuffer += cleaned;
-        const parts = this.lineBuffer.split("\n");
-        // Last part might be incomplete
-        this.lineBuffer = parts.pop() || "";
-
-        const parsedLines: ParsedLogLine[] = [];
-        for (const part of parts) {
-          const trimmed = part.trim();
-          if (!trimmed || isRttHeader(trimmed)) continue;
-          parsedLines.push(parseZephyrLog(trimmed));
-        }
-
-        if (parsedLines.length > 0) {
-          const msg: RTTMessage = {
-            channel: 0,
-            timestamp: new Date(),
-            rawData: raw,
-            lines: parsedLines,
-          };
-          this.messages.push(msg);
-          if (this.messages.length > this.maxMessages) {
-            this.messages.shift();
-          }
-
-          for (const line of parsedLines) {
-            this.allLines.push(line);
-          }
-          while (this.allLines.length > this.maxLines) {
-            this.allLines.shift();
-          }
-
-          this.emit("data", msg);
-        }
+        this.ingest(data.toString());
       });
 
       this.socket.on("close", () => {
@@ -175,6 +140,59 @@ export class RTTClient extends EventEmitter {
   }
 
   /** Get recent log lines as formatted text */
+  /**
+   * Feed a raw chunk from the RTT stream through the parse pipeline:
+   * strip ANSI, reassemble lines across chunk boundaries, drop SEGGER
+   * banner lines, parse the Zephyr log format, and append to the ring
+   * buffers.
+   *
+   * Split out from the socket handler so the pipeline can be driven
+   * directly by tests — chunk-boundary handling in particular is only
+   * exercised when a line is delivered in pieces, which is exactly what
+   * a live TCP stream does and what a socket-level test can't control.
+   */
+  ingest(raw: string): void {
+    // Buffer the raw bytes and strip ANSI per *complete line*, never per
+    // chunk. A TCP read can land in the middle of an escape sequence, and
+    // stripping each chunk in isolation leaves the two halves unmatched —
+    // raw escape bytes then leak into the log text, and the line no longer
+    // starts with "[", so parseZephyrLog can't read its level or module and
+    // rtt_search silently stops matching it.
+    this.lineBuffer += raw;
+    const parts = this.lineBuffer.split("\n");
+    // Last part might be incomplete — hold it until the rest arrives
+    this.lineBuffer = parts.pop() || "";
+
+    const parsedLines: ParsedLogLine[] = [];
+    for (const part of parts) {
+      const trimmed = stripAnsi(part).trim();
+      if (!trimmed || isRttHeader(trimmed)) continue;
+      parsedLines.push(parseZephyrLog(trimmed));
+    }
+
+    if (parsedLines.length === 0) return;
+
+    const msg: RTTMessage = {
+      channel: 0,
+      timestamp: new Date(),
+      rawData: raw,
+      lines: parsedLines,
+    };
+    this.messages.push(msg);
+    if (this.messages.length > this.maxMessages) {
+      this.messages.shift();
+    }
+
+    for (const line of parsedLines) {
+      this.allLines.push(line);
+    }
+    while (this.allLines.length > this.maxLines) {
+      this.allLines.shift();
+    }
+
+    this.emit("data", msg);
+  }
+
   getLines(count: number = 50): string[] {
     const lines = this.allLines.slice(-count);
     return lines.map((l) => {

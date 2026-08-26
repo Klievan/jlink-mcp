@@ -1,0 +1,12 @@
+=thread-group-added,id="i1"
+~"GNU gdb (GNU Arm Embedded Toolchain 12.3.rel1) 13.2.90.20230627-git\n"
+~"Reading symbols from fixture.elf...\n"
+^done
+(gdb)
+&"continue\n"
+~"Continuing.\n"
+^running
+*running,thread-id="all"
+(gdb)
+*stopped,reason="breakpoint-hit",disp="keep",bkptno="1",frame={addr="0x000004b2",func="test_marker_fn",args=[],file="src/main.c",line="42"},thread-id="1",stopped-threads="all"
+(gdb)

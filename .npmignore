@@ -12,3 +12,7 @@ CLAUDE.md
 **/*.ts
 !out/**/*.d.ts
 *.vsix
+test/**
+out-test/**
+tsconfig.test.json
+.github/**

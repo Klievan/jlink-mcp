@@ -1,0 +1,35 @@
+SEGGER J-Link Commander V7.94e (Compiled Dec  6 2023 16:07:41)
+DLL version V7.94e, compiled Dec  6 2023 16:07:24
+
+Connecting to J-Link via USB...O.K.
+Firmware: J-Link OB-nRF5340-NordicSemi compiled Oct 30 2023 12:13:19
+Hardware version: V1.00
+S/N: 001050288712
+License(s): RDI, FlashBP, FlashDL, JFlash, GDB
+VTref=3.300V
+Device "NRF52840_XXAA" selected.
+
+Connecting to target via SWD
+Found SW-DP with ID 0x2BA01477
+DPIDR: 0x2BA01477
+CoreSight SoC-400 or earlier
+AP map detection skipped. Manually configured AP map found.
+AP[0]: AHB-AP (IDR: Not set)
+AP[0]: Core found
+AP[0]: AHB-AP ROM base: 0xE00FF000
+CPUID register: 0x410FC241. Implementer code: 0x41 (ARM)
+Found Cortex-M4 r0p1, Little endian.
+FPUnit: 6 code (BP) slots and 2 literal slots
+CoreSight components:
+ROMTbl[0] @ E00FF000
+Cortex-M4 identified.
+R0 = 20000B10, R1 = 00000000, R2 = 00000001, R3 = 20002C48
+R4 = 00000000, R5 = 00000000, R6 = 00000000, R7 = 20002C60
+R8 = 00000000, R9 = 20001A34, R10= 00000000, R11= 00000000
+R12= 00000000
+SP(R13)= 20002C40, MSP= 20002C40, PSP= 00000000, R14(LR) = 0000FFFF
+PC = 000004B2, CycleCnt = 0002E71A
+XPSR = 61000000: APSR = nZCvq, EPSR = 01000000, IPSR = 000 (No Exception)
+CFBP = 00000000, CONTROL = 00, FAULTMASK = 00, BASEPRI = 00, PRIMASK = 00
+
+J-Link>

@@ -1,0 +1,12 @@
+SEGGER J-Link V7.94e - Real time terminal output
+J-Link OB-nRF5340-NordicSemi compiled Oct 30 2023 12:13:19 V1.0, SN=001050288712
+Process: JLinkGDBServerCLExe
+*** Booting Zephyr OS build v3.5.0-rc1 ***
+[0m[00:00:00.000,244] [1;32m<inf> hil_fixture: fixture ready seq=0[0m
+[0m[00:00:01.000,488] [1;32m<inf> hil_fixture: heartbeat seq=1[0m
+[0m[00:00:01.500,732] [0m<dbg> sensor_drv: sample raw=0x0410 scaled=1040[0m
+[0m[00:00:02.000,976] [1;33m<wrn> sensor_drv: sample out of range, clamping[0m
+[0m[00:00:02.500,122] [1;31m<err> hil_fixture: injected fault: nullderef[0m
+[0m[00:00:02.501,000] [1;31m<err> os: ***** BUS FAULT *****[0m
+[0m[00:00:02.501,100] [1;31m<err> os:   Precise data bus error[0m
+[0m[00:00:02.501,200] [1;31m<err> os:   BFAR Address: 0x00000000[0m
