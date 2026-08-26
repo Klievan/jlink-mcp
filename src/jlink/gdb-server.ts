@@ -37,7 +37,8 @@ export class GDBServerManager {
       "-vd",
       "-noir",
       "-LocalhostOnly", "1",
-      "-singlerun",
+      // `-singlerun` intentionally omitted — see rationale in
+      // `probe/jlink.ts` startGDBServer.
     ];
 
     if (config.jlink.serialNumber) {
