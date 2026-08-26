@@ -212,8 +212,42 @@ describe("S6 — RTT logging and the down channel", { skip }, () => {
 
     const out = await hil.expectOk("rtt_read", { count: 50 });
     record("hil-rtt-after-reset.txt", out);
+
+    // Instrument before asserting, because "no RTT output" has three very
+    // different causes and the message alone cannot tell them apart.
+    //
+    // SEGGER's control block puts up-buffer 0 at offset 24, and within it
+    // WrOff at +12 and RdOff at +16 — so words 9 and 10 of a dump starting at
+    // _SEGGER_RTT. WrOff is the target's; RdOff is the host's. That splits it:
+    //
+    //   WrOff advancing, RdOff stuck  -> the host side stopped draining
+    //   WrOff stuck                   -> the firmware is not writing
+    //   both advancing                -> data flows; our telnet client is at
+    //                                    fault for not carrying it
+    const pointers = async () => withTargetHalted(hil, async () => {
+      const cb = await hil.expectOk("read_memory", { address: hex(sym("_SEGGER_RTT")), length: 48 });
+      return { id: /SEGGER/.test(cb), wr: word32(cb, 9), rd: word32(cb, 10), cb };
+    });
+    const p1 = await pointers();
+    await sleep(600);
+    const p2 = await pointers();
+
+    const diag = [
+      `RTT read returned: ${JSON.stringify(out.slice(0, 120))}`,
+      `control block ID present: ${p1.id}`,
+      `WrOff (target writes): ${p1.wr} -> ${p2.wr}`,
+      `RdOff (host reads):    ${p1.rd} -> ${p2.rd}`,
+      p1.wr !== p2.wr && p1.rd === p2.rd
+        ? "=> target is writing, host is not draining: J-Link's RTT engine lost the stream across the reset"
+        : p1.wr === p2.wr
+          ? "=> target is not writing: the firmware is not reaching its RTT calls after the reset"
+          : "=> both pointers moving: data is flowing and the telnet client is dropping it",
+      `control block:\n${p1.cb}`,
+    ].join("\n");
+    record("hil-rtt-after-reset-diagnostic.txt", diag);
+
     assert.ok(/seq=\d+/.test(out),
-      `RTT produced nothing after a reset — the server was probably evicted: ${JSON.stringify(out.slice(0, 200))}`);
+      `RTT produced nothing after a reset.\n${diag}`);
 
     // And the reset must actually have reset. Checked directly rather than
     // through the log: halt after a reset and the PC must be at the reset
