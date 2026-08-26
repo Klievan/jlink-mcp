@@ -404,18 +404,38 @@ export abstract class ProbeBackend {
     return lines.join("\n");
   }
 
-  /** Parse hex dump lines from probe output */
+  /**
+   * Parse hex dump lines from probe output.
+   *
+   * The hex column is matched as an explicit run of byte pairs rather than
+   * "anything up to two spaces". J-Link separates the two 8-byte halves of a
+   * 16-byte line with a *double* space, exactly like the column before the
+   * ASCII field:
+   *
+   *     E000ED28 = 00 00 00 00 00 00 00 00  01 00 00 00 74 28 06 20  ......t(.
+   *                └──────── 8 bytes ─────┘└┘└──────── 8 bytes ────┘└┘└ ascii
+   *
+   * A non-greedy `(.+?)\s{2,}` stops at the first of those separators and
+   * silently drops the second half of every line, which left
+   * `readFaultRegisters` short of its 16-byte minimum and reporting
+   * CFSR/HFSR/MMFAR/BFAR as all-zero — i.e. "no faults detected" on a live
+   * crash.
+   */
   parseMemoryDump(raw: string): MemoryDumpLine[] {
     const results: MemoryDumpLine[] = [];
+    const HEX_RUN = String.raw`((?:[0-9A-Fa-f]{2}\s+)*[0-9A-Fa-f]{2})`;
+    // J-Link format: "E000ED28 = 00 00 00 00 ..."
+    const jlinkRe = new RegExp(String.raw`^([0-9A-Fa-f]{8})\s*=\s*${HEX_RUN}(?:\s{2,}(.*))?$`);
+    // OpenOCD / GDB format: "0xe000ed28: 00 00 00 00 ..."
+    const ocdRe = new RegExp(String.raw`^(0x[0-9a-fA-F]+)\s*:\s*${HEX_RUN}(?:\s{2,}(.*))?$`);
+
     for (const line of raw.split("\n")) {
-      // J-Link format: "E000ED28 = 00 00 00 00 ..."
-      const jlinkMatch = line.match(/^([0-9A-Fa-f]{8})\s*=\s*(.+?)\s{2,}(.*)$/);
+      const jlinkMatch = line.match(jlinkRe);
       if (jlinkMatch) {
-        results.push({ address: `0x${jlinkMatch[1]}`, hex: jlinkMatch[2].trim(), ascii: jlinkMatch[3].trim() });
+        results.push({ address: `0x${jlinkMatch[1]}`, hex: jlinkMatch[2].trim(), ascii: (jlinkMatch[3] || "").trim() });
         continue;
       }
-      // OpenOCD / GDB format: "0xe000ed28: 00 00 00 00 ..."
-      const ocdMatch = line.match(/^(0x[0-9a-fA-F]+)\s*:\s*(.+?)(?:\s{2,}(.*))?$/);
+      const ocdMatch = line.match(ocdRe);
       if (ocdMatch) {
         results.push({ address: ocdMatch[1], hex: ocdMatch[2].trim(), ascii: (ocdMatch[3] || "").trim() });
       }

@@ -113,7 +113,10 @@
         },
         "jlinkMcp.jlink.interface": {
           "type": "string",
-          "enum": ["SWD", "JTAG"],
+          "enum": [
+            "SWD",
+            "JTAG"
+          ],
           "default": "SWD",
           "description": "Debug interface"
         },
@@ -199,7 +202,10 @@
     "prepublishOnly": "npm run build",
     "vscode:prepublish": "npm run build",
     "package": "npm run build && vsce package",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test": "npm run test:unit",
+    "test:unit": "tsc -p tsconfig.test.json && node --test out-test/test/unit/*.test.js",
+    "test:watch": "tsc -p tsconfig.test.json && node --test --watch out-test/test/unit/*.test.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

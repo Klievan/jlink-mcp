@@ -10,6 +10,17 @@ npm install
 npm run compile
 ```
 
+## Testing
+
+```bash
+npm test          # unit tier: replays test/golden/ transcripts through the parsers
+```
+
+Fast tier only — no hardware. Assert on parsed *content*, not `success === true`;
+the parsers fail by silently returning nothing while the tool still reports
+success. See `test/README.md`. A hardware-in-the-loop tier (`test/hil/`) against
+an nRF52840-DK on a self-hosted runner is planned but not built.
+
 ## VSCode Extension (native MCP integration)
 
 Install the extension in VSCode 1.99+. It registers an MCP server definition provider

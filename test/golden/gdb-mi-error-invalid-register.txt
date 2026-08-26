@@ -1,0 +1,3 @@
+&"info registers PC\n"
+^error,msg="Invalid register `PC'"
+(gdb)
