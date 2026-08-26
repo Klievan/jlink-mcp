@@ -10,7 +10,7 @@
   "bugs": {
     "url": "https://github.com/Klievan/jlink-mcp/issues"
   },
-  "version": "0.3.2",
+  "version": "0.4.0",
   "publisher": "Klievan",
   "icon": "logo.png",
   "license": "MIT",
@@ -101,6 +101,21 @@
     "configuration": {
       "title": "J-Link MCP",
       "properties": {
+        "jlinkMcp.probeType": {
+          "type": "string",
+          "enum": [
+            "jlink",
+            "openocd",
+            "blackmagic"
+          ],
+          "default": "jlink",
+          "description": "Debug probe backend. OpenOCD covers ST-Link, CMSIS-DAP and FTDI adapters."
+        },
+        "jlinkMcp.gdbPath": {
+          "type": "string",
+          "default": "arm-none-eabi-gdb",
+          "description": "GDB used for source-level debugging. gdb-multiarch works if you have no ARM-specific build."
+        },
         "jlinkMcp.jlink.installDir": {
           "type": "string",
           "default": "",
@@ -160,30 +175,45 @@
           "default": "localhost",
           "description": "Source host for telnet proxy"
         },
-        "jlinkMcp.trice.binaryPath": {
+        "jlinkMcp.openocd.binaryPath": {
           "type": "string",
-          "default": "trice",
-          "description": "Path to trice binary"
+          "default": "openocd",
+          "description": "Path to the openocd binary"
         },
-        "jlinkMcp.trice.idListPath": {
+        "jlinkMcp.openocd.interfaceConfig": {
+          "type": "string",
+          "default": "interface/stlink.cfg",
+          "description": "OpenOCD interface config (e.g. interface/stlink.cfg, interface/cmsis-dap.cfg)"
+        },
+        "jlinkMcp.openocd.targetConfig": {
+          "type": "string",
+          "default": "target/stm32f4x.cfg",
+          "description": "OpenOCD target config (e.g. target/stm32f4x.cfg, target/nrf52.cfg)"
+        },
+        "jlinkMcp.openocd.gdbPort": {
+          "type": "number",
+          "default": 3333,
+          "description": "OpenOCD GDB server port"
+        },
+        "jlinkMcp.openocd.telnetPort": {
+          "type": "number",
+          "default": 4444,
+          "description": "OpenOCD telnet/monitor port"
+        },
+        "jlinkMcp.blackmagic.gdbPath": {
+          "type": "string",
+          "default": "arm-none-eabi-gdb",
+          "description": "GDB binary used to drive a Black Magic Probe"
+        },
+        "jlinkMcp.blackmagic.serialPort": {
           "type": "string",
           "default": "",
-          "description": "Path to Trice ID list file (til.json)"
+          "description": "BMP serial port (e.g. /dev/cu.usbmodemXXXX). Auto-detected when empty."
         },
-        "jlinkMcp.trice.encoding": {
-          "type": "string",
-          "default": "TREX",
-          "description": "Trice encoding format"
-        },
-        "jlinkMcp.pigweed.tokenDatabase": {
-          "type": "string",
-          "default": "",
-          "description": "Path to Pigweed token database (.csv or .elf)"
-        },
-        "jlinkMcp.pigweed.pythonPath": {
-          "type": "string",
-          "default": "python3",
-          "description": "Path to Python for Pigweed detokenizer"
+        "jlinkMcp.blackmagic.targetIndex": {
+          "type": "number",
+          "default": 1,
+          "description": "Target index reported by the probe's scan"
         }
       }
     },

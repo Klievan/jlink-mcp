@@ -51,7 +51,7 @@ See `test/README.md` and `test/golden/README.md`.
 
 ## VSCode Extension (native MCP integration)
 
-Install the extension in VSCode 1.99+. It registers an MCP server definition provider
+Install the extension in VSCode 1.110+. It registers an MCP server definition provider
 via `vscode.lm.registerMcpServerDefinitionProvider()`, so Copilot Chat, Claude, and any
 MCP-aware client auto-discover the J-Link tools. No manual `.mcp.json` needed.
 
@@ -104,4 +104,6 @@ Env vars: `JLINK_DEVICE`, `JLINK_INSTALL_DIR`, `JLINK_INTERFACE`, `JLINK_SPEED`,
 - SEGGER J-Link software installed (JLinkExe, JLinkGDBServer)
 - A J-Link debug probe connected to a target device
 - Configure device name in VSCode settings: `jlinkMcp.jlink.device`
-- VSCode 1.99+ for native MCP integration
+- VSCode 1.110+ for native MCP integration (enforced by `engines.vscode`; the
+  extension is typed against that API level, so lowering it needs verifying
+  when `vscode.lm.registerMcpServerDefinitionProvider` actually landed)

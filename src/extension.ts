@@ -43,23 +43,54 @@ export function activate(context: vscode.ExtensionContext) {
           context.extensionUri, "out", "mcp", "standalone.js"
         ).fsPath;
 
-        // Build env vars from user's VSCode settings so the standalone
+        // Build env vars from the user's VSCode settings so the standalone
         // server gets the same config without needing VSCode APIs.
+        //
+        // Every setting declared in package.json must appear here. A setting
+        // that shows up in the settings UI and is then dropped on the floor is
+        // worse than one that does not exist: the user configures it, sees no
+        // effect, and has no way to tell whether the setting or the hardware
+        // is at fault. There is a test that fails if the two lists diverge.
         const env: Record<string, string | number | null> = {};
+        const put = (key: string, value: string | number | undefined | null) => {
+          if (value !== undefined && value !== null && value !== "") env[key] = value;
+        };
+
+        // Which backend to drive. Without this the OpenOCD and Black Magic
+        // support is unreachable from the extension entirely.
+        const probeType = cfg.get<string>("probeType");
+        if (probeType && probeType !== "jlink") put("PROBE_TYPE", probeType);
+
+        // J-Link
         const device = cfg.get<string>("jlink.device");
-        if (device && device !== "Unspecified") env["JLINK_DEVICE"] = device;
-        const installDir = cfg.get<string>("jlink.installDir");
-        if (installDir) env["JLINK_INSTALL_DIR"] = installDir;
-        const iface = cfg.get<string>("jlink.interface");
-        if (iface) env["JLINK_INTERFACE"] = iface;
-        const speed = cfg.get<number>("jlink.speed");
-        if (speed) env["JLINK_SPEED"] = speed;
-        const serial = cfg.get<string>("jlink.serialNumber");
-        if (serial) env["JLINK_SERIAL"] = serial;
-        const gdbPort = cfg.get<number>("jlink.gdbPort");
-        if (gdbPort) env["JLINK_GDB_PORT"] = gdbPort;
-        const rttPort = cfg.get<number>("jlink.rttTelnetPort");
-        if (rttPort) env["JLINK_RTT_PORT"] = rttPort;
+        if (device && device !== "Unspecified") put("JLINK_DEVICE", device);
+        put("JLINK_INSTALL_DIR", cfg.get<string>("jlink.installDir"));
+        put("JLINK_INTERFACE", cfg.get<string>("jlink.interface"));
+        put("JLINK_SPEED", cfg.get<number>("jlink.speed"));
+        put("JLINK_SERIAL", cfg.get<string>("jlink.serialNumber"));
+        put("JLINK_GDB_PORT", cfg.get<number>("jlink.gdbPort"));
+        put("JLINK_RTT_PORT", cfg.get<number>("jlink.rttTelnetPort"));
+        put("JLINK_SWO_PORT", cfg.get<number>("jlink.swoTelnetPort"));
+
+        // OpenOCD
+        put("OPENOCD_BINARY", cfg.get<string>("openocd.binaryPath"));
+        put("OPENOCD_INTERFACE", cfg.get<string>("openocd.interfaceConfig"));
+        put("OPENOCD_TARGET", cfg.get<string>("openocd.targetConfig"));
+        put("OPENOCD_GDB_PORT", cfg.get<number>("openocd.gdbPort"));
+        put("OPENOCD_TELNET_PORT", cfg.get<number>("openocd.telnetPort"));
+
+        // Black Magic Probe
+        put("BMP_GDB_PATH", cfg.get<string>("blackmagic.gdbPath"));
+        put("BMP_SERIAL_PORT", cfg.get<string>("blackmagic.serialPort"));
+        put("BMP_TARGET_INDEX", cfg.get<number>("blackmagic.targetIndex"));
+
+        // Telnet proxy for Trice / Pigweed detokenizers
+        put("TELNET_PROXY_PORT", cfg.get<number>("telnetProxy.listenPort"));
+        put("TELNET_PROXY_SOURCE_PORT", cfg.get<number>("telnetProxy.sourcePort"));
+        put("TELNET_PROXY_SOURCE_HOST", cfg.get<string>("telnetProxy.sourceHost"));
+
+        // The GDB used for source-level debugging.
+        put("GDB_PATH", cfg.get<string>("gdbPath"));
 
         return [
           new vscode.McpStdioServerDefinition(
