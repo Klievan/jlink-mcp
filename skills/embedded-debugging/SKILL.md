@@ -118,7 +118,7 @@ to ask the hardware, and it takes one tool call. Some worked examples:
 |---|---|
 | "The core is running" | Halt, read a counter, resume, halt, read again. Moving is running. Same PC twice is not proof of a hang — it may be a delay loop. |
 | "The reset worked" | Reset, **resume**, then read a `.bss` variable that only climbs. A halting reset stops *before* startup zeroes `.bss`, so checking without resuming proves nothing. |
-| "The device stopped logging" | Read the RTT control block. `WrOff` is the target's write pointer, `RdOff` the host's. `WrOff` moving while `RdOff` sits still means the firmware is fine and the probe stopped collecting. |
+| "The device stopped logging" | `rtt_status`. It reads the control block and separates the two cases: `WrOff` is the target's write pointer, `RdOff` the host's. `WrOff` moving while `RdOff` sits still means the firmware is fine and the probe stopped collecting. |
 | "It's hung" | Check for armed breakpoints. A stale FPB comparator raises a debug event that, with no debugger attached, escalates to HardFault — indistinguishable from a hang. `clear_breakpoints` and re-run. |
 | "That register is 0" | Confirm the read succeeded. A refused read and a genuine zero look identical once the value reaches you. |
 | "The firmware on the device is the one I built" | Read the vector table or a known constant and compare against your build. Flashing can silently not have happened. |
@@ -159,8 +159,13 @@ peripheral enabled before it was configured.
 
 ### A device that boots and then goes silent
 Distinguish three cases before theorising: the firmware stopped, the probe
-stopped collecting, or the log level filters it. Check the RTT pointers, check
-the PC, then check `rtt_search` without a level filter.
+stopped collecting, or the log level filters it.
+
+```
+rtt_status              # separates "quiet device" from "probe not collecting"
+snapshot                # is the PC still moving?
+rtt_search {}           # is it logging below your filter?
+```
 
 ## Session hygiene
 

@@ -728,11 +728,32 @@ export class JLinkBackend extends ProbeBackend {
     }
 
     this.setState(ProbeState.PROBE_CONNECTED);
+
+    // Report what the server said; only name contention when the evidence
+    // supports it.
+    //
+    // This used to assert "check for another JLinkGDBServer or JLinkExe
+    // holding the probe" on every failure. Measured against a target whose
+    // debug port was unpowered, the server's own words were
+    // "ERROR: Could not connect to target" — and the same output showed
+    // "J-Link is connected" and "Listening on TCP/IP port 2331", i.e. proof
+    // the probe was *not* contended. Someone acting on that message killed
+    // processes for nothing.
+    //
+    // A guess printed with this much confidence is worse than no guess, and
+    // it is exactly what this server keeps being wrong about elsewhere.
+    const contended = /in use|already|another|cannot open|failed to open/i.test(lastDetail);
+    const targetSide = /could not connect to target|no target|target voltage/i.test(lastDetail);
     return {
       success: false,
       message:
-        `GDB Server failed to start after 3 attempts: ${lastDetail}. ` +
-        `A J-Link serves one client at a time — check for another JLinkGDBServer or JLinkExe holding the probe.`,
+        `GDB Server failed to start after 3 attempts. It said: ${lastDetail}\n` +
+        (targetSide
+          ? "That is a target-side failure: the probe is fine and the chip is not answering. " +
+            "Check target power and the debug connection."
+          : contended
+            ? "A J-Link serves one client at a time; another JLinkGDBServer or JLinkExe may hold it."
+            : "Cause unclear from that message — check the GDB server output via gdb_server_status."),
     };
   }
 

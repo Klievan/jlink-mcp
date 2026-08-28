@@ -2,6 +2,9 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { JLinkBackend } from "../../src/probe/jlink";
 import { ProcessManager } from "../../src/utils/process-manager";
+import { readFileSync } from "fs";
+import { join } from "path";
+import { repoRoot } from "../helpers";
 
 /**
  * The first thing a new user hits is not a debugging problem, it is an
@@ -73,5 +76,32 @@ describe("deciding whether a probe is attached", () => {
 
   test("does not read an empty scan as a connection", () => {
     assert.equal(connected.test(""), false);
+  });
+});
+
+describe("tools that must not editorialise", () => {
+  // probe_command is the escape hatch. People reach for it precisely when the
+  // friendly tools have failed them, so replacing the probe's own words with
+  // advice is the one thing it must never do.
+  //
+  // It used to route through resultText, which on a failure returns the reason
+  // and suggested action *instead of* the output. A recovery that printed a
+  // full J-Link transcript came back as "Recovery failed. Try: 1) reset with
+  // halt..." and nothing else, costing someone 25 minutes re-running the same
+  // commands by hand to see output the tool already had.
+  test("a failing probe_command still returns the transcript", () => {
+    const src = readFileSync(join(repoRoot(__dirname), "src/mcp/server.ts"), "utf8");
+    // Scope to this handler only — the next tool along legitimately uses
+    // resultText, and a fixed-size window catches it.
+    const start = src.indexOf('"probe_command"');
+    const next = src.indexOf("this.server.tool(", start + 10);
+    const handler = src.slice(start, next > start ? next : start + 1600);
+    assert.ok(/rawOutput \|\| r\.output/.test(handler),
+      "probe_command must read the raw transcript, not a formatted summary");
+    // Strip comments first: the handler's own comment names resultText while
+    // explaining why it does not use it, and matching that is matching prose.
+    const code = handler.replace(/\/\/[^\n]*/g, "");
+    assert.ok(!/resultText/.test(code),
+      "probe_command must not route through resultText — it swaps output for advice on failure");
   });
 });

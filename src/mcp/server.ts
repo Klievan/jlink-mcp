@@ -389,9 +389,28 @@ export class JLinkMcpServer {
         }
 
         const faultData = await probe.readFaultRegisters();
-        sections.push("\n### Fault Registers");
-        sections.push(`CFSR=0x${faultData.raw.cfsr.toString(16).padStart(8, "0")} HFSR=0x${faultData.raw.hfsr.toString(16).padStart(8, "0")} DFSR=0x${faultData.raw.dfsr.toString(16).padStart(8, "0")} MMFAR=0x${faultData.raw.mmfar.toString(16).padStart(8, "0")} BFAR=0x${faultData.raw.bfar.toString(16).padStart(8, "0")}`);
-        sections.push("\n### Decoded Faults");
+
+        // If the read failed, print no numbers at all.
+        //
+        // readFaultRegisters already returns a clear warning in `decoded` when
+        // it could not read — but this printed its zeroed `raw` struct two
+        // lines above that warning, under a heading that looks authoritative:
+        //
+        //   ### Fault Registers
+        //   CFSR=0x00000000 HFSR=0x00000000 ...
+        //   ### Decoded Faults
+        //   Could not read the fault registers — this is NOT a report that...
+        //
+        // Anything skimming reads the zeros as "no faults", which is the exact
+        // failure this project's CLAUDE.md says it learned the hard way. The
+        // warning was right there and the layout defeated it.
+        if (faultData.result.success) {
+          sections.push("\n### Fault Registers");
+          sections.push(`CFSR=0x${faultData.raw.cfsr.toString(16).padStart(8, "0")} HFSR=0x${faultData.raw.hfsr.toString(16).padStart(8, "0")} DFSR=0x${faultData.raw.dfsr.toString(16).padStart(8, "0")} MMFAR=0x${faultData.raw.mmfar.toString(16).padStart(8, "0")} BFAR=0x${faultData.raw.bfar.toString(16).padStart(8, "0")}`);
+          sections.push("\n### Decoded Faults");
+        } else {
+          sections.push("\n### Fault Registers — NOT READ");
+        }
         sections.push(faultData.decoded);
 
         if (regs) {
@@ -990,6 +1009,83 @@ export class JLinkMcpServer {
       }
     );
 
+    this.server.tool(
+      "rtt_status",
+      "Read SEGGER's RTT control block on the target: is it initialised, how much has the firmware " +
+      "written, and how much has the probe collected. Use this when RTT is silent — it separates a " +
+      "quiet device from a probe that stopped collecting, which look identical from rtt_read.",
+      {
+        address: z.string().optional().describe(
+          "Address of the control block (your _SEGGER_RTT symbol), e.g. '0x20002050'. " +
+          "Defaults to JLINK_RTT_ADDR if that is set."),
+      },
+      async ({ address }) => {
+        const g = this.requireDevice(); if (g) return g;
+        await this.ensureGdbSession();
+
+        const configured = this.probe.getRttControlBlockAddress();
+        const addr = address ? parseInt(address, 16) : configured;
+        if (addr === undefined || !Number.isFinite(addr)) {
+          return { content: [{ type: "text", text:
+            "No control block address. Pass one, or set JLINK_RTT_ADDR to your firmware's " +
+            "_SEGGER_RTT symbol. The probe finds it by scanning RAM and never reports back what it found." }] };
+        }
+
+        // 48 bytes covers the 16-byte ID, the two buffer counts, and all of
+        // up-buffer 0 — which is where the pointers live.
+        const r = await this.probe.readMemory(addr, 48);
+        if (!r.success) {
+          return { content: [{ type: "text", text:
+            `Could not read the control block at 0x${addr.toString(16)}: ` +
+            `${JLinkMcpServer.resultText(r, "no reason reported")}\n\n` +
+            `Halt the target first if it is running.` }] };
+        }
+
+        const bytes = this.probe.parseMemoryDump(r.rawOutput).map((d) => d.hex).join(" ").split(/\s+/).filter(Boolean);
+        if (bytes.length < 48) {
+          return { content: [{ type: "text", text: `Short read at 0x${addr.toString(16)}: got ${bytes.length} of 48 bytes.` }] };
+        }
+
+        const id = bytes.slice(0, 16).map((b) => parseInt(b, 16))
+          .filter((c) => c >= 0x20 && c < 0x7f).map((c) => String.fromCharCode(c)).join("");
+        // SEGGER's layout: up-buffer 0 begins at offset 24; WrOff at +12,
+        // RdOff at +16. WrOff is the target's, RdOff the host's.
+        const word = (o: number) => parseLittleEndian32(bytes, o);
+        const wr = word(36), rd = word(40), size = word(32);
+
+        const lines = [`Control block at 0x${addr.toString(16)}`];
+
+        // Without a valid ID the following words are not pointers, they are
+        // whatever happens to be in RAM. Printing them as "buffer: 813175598
+        // bytes" dresses noise as measurement, which is the habit this server
+        // exists to break.
+        if (!/SEGGER/.test(id)) {
+          lines.push(
+            `  ID        : ${JSON.stringify(id)}`,
+            ``,
+            `No RTT control block here. Either the firmware has not reached its RTT init yet,`,
+            `or this is the wrong address — it should be your _SEGGER_RTT symbol. The remaining`,
+            `fields are not shown because they would just be whatever is in RAM at that offset.`);
+          return { content: [{ type: "text", text: lines.join("\n") }] };
+        }
+
+        lines.push(
+          `  ID        : ${JSON.stringify(id)}`,
+          `  buffer    : ${size} bytes`,
+          `  WrOff     : ${wr}   (written by the target)`,
+          `  RdOff     : ${rd}   (written by the probe as it collects)`);
+        {
+          const pending = wr >= rd ? wr - rd : size - rd + wr;
+          lines.push(pending === 0
+            ? `  => nothing pending: the probe has collected everything written. Silence here is a quiet device.`
+            : `  => ${pending} bytes written and not collected. If this does not fall on a second look, the ` +
+              `probe has stopped draining — which is what a reset or flash does to RTT. Restart collection ` +
+              `by reconnecting RTT (JLINK_RTT_ADDR must be set for that to work).`);
+        }
+        return { content: [{ type: "text", text: lines.join("\n") }] };
+      }
+    );
+
     this.server.tool("rtt_clear", "Clear RTT buffer", {},
       async () => { this.rttClient.clearBuffer(); return { content: [{ type: "text", text: "RTT buffer cleared" }] }; }
     );
@@ -1027,7 +1123,22 @@ export class JLinkMcpServer {
         const g = this.requireDevice(); if (g) return g;
         await this.ensureGdbSession();
         const r = await probe.executeRaw(commands);
-        return { content: [{ type: "text", text: JLinkMcpServer.resultText(r, "(no output)") }] };
+
+        // The transcript, always, verbatim. This is the escape hatch people
+        // reach for precisely when the friendly tools have failed them, so it
+        // is the one place that must not summarise, interpret, or replace the
+        // probe's own words with advice.
+        //
+        // It used to route through resultText, which on a failure returns the
+        // reason and suggested action instead of the output — so a recovery
+        // that printed a full J-Link transcript came back as
+        // "Recovery failed. Try: 1) reset with halt..." and nothing else.
+        // Somebody debugging an unreachable target lost 25 minutes
+        // re-running these commands by hand to see output this tool already
+        // had in its hand.
+        const transcript = (r.rawOutput || r.output || "").trimEnd();
+        const note = !r.success && r.error ? `\n\n[tool note] ${r.error}` : "";
+        return { content: [{ type: "text", text: (transcript || "(no output)") + note }] };
       }
     );
 
