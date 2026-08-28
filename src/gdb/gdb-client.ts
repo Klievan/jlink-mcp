@@ -577,8 +577,28 @@ export class GDBClient {
     const bkptno = miOutput.match(/bkptno="([^"]*)"/)?.[1];
     const signalName = miOutput.match(/signal-name="([^"]*)"/)?.[1];
 
+    // A watchpoint firing arrives as wpt=/value= alongside the stop, and on
+    // this remote it can arrive labelled only as a SIGTRAP. Reported as a bare
+    // signal it is indistinguishable from any other trap, which is how someone
+    // came to conclude — after 25 minutes — that watchpoints never fire at all.
+    // They do; we were rendering the evidence away.
+    const wpNum = miOutput.match(/wpt=\{number="([^"]*)"/)?.[1]
+      ?? miOutput.match(/hw-[arw]wpt=\{number="([^"]*)"/)?.[1];
+    const wpExpr = miOutput.match(/wpt=\{number="[^"]*",exp="([^"]*)"/)?.[1]
+      ?? miOutput.match(/hw-[arw]wpt=\{number="[^"]*",exp="([^"]*)"/)?.[1];
+    const wpOld = miOutput.match(/value=\{old="([^"]*)"/)?.[1];
+    const wpNew = miOutput.match(/value=\{(?:old="[^"]*",)?new="([^"]*)"/)?.[1];
+
     if (bkptno) parts.push(`breakpoint #${bkptno}`);
-    if (signalName) parts.push(`signal ${signalName}`);
+    if (wpNum) {
+      parts.push(`watchpoint #${wpNum}${wpExpr ? ` on ${wpExpr}` : ""}`);
+      if (wpOld !== undefined || wpNew !== undefined) {
+        parts.push(`(${wpOld ?? "?"} -> ${wpNew ?? "?"})`);
+      }
+    }
+    // Only mention the raw signal when nothing better explains the stop. A
+    // watchpoint that also reports SIGTRAP should read as a watchpoint.
+    if (signalName && !bkptno && !wpNum) parts.push(`signal ${signalName}`);
     if (func) parts.push(`at ${func}()`);
     if (file && line) parts.push(`${file}:${line}`);
     else if (addr) parts.push(`at ${addr}`);

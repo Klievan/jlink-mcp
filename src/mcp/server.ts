@@ -388,7 +388,13 @@ export class JLinkMcpServer {
           }
         }
 
-        const lines = this.rttClient.getLines(rttLines ?? 30);
+        // `0` means zero. It used to reach getLines as a falsy count and come
+        // back as the entire ring buffer — one call returned 495 KB and 6069
+        // lines, which without a harness spilling it to a file ends a session
+        // outright. The schema allows 0 and there is only one thing it can
+        // reasonably mean.
+        const want = rttLines ?? 30;
+        const lines = want === 0 ? [] : this.rttClient.getLines(want);
         if (lines.length > 0) {
           sections.push(`\n## RTT Output (last ${lines.length} lines)`);
           sections.push(lines.join("\n"));
@@ -849,7 +855,22 @@ export class JLinkMcpServer {
         const g = this.requireDevice(); if (g) return g;
         await this.ensureGdbSession();
         const r = await probe.setBreakpoint(addr);
-        return { content: [{ type: "text", text: r.success ? `Breakpoint set at 0x${addr.toString(16)}` : `Failed: ${r.output}` }] };
+        if (!r.success) {
+          return { content: [{ type: "text", text: `Failed: ${JLinkMcpServer.resultText(r, "no reason reported")}` }] };
+        }
+        // Report where it landed, not where it was asked for. A breakpoint
+        // set by file:line can resolve into the middle of a loop — someone
+        // lost half an hour to one that hit 41 times per sweep instead of
+        // once, because the stop report looks identical either way. GDB knows
+        // the function and offset; ask it rather than making the caller
+        // disassemble to find out.
+        const where = await this.gdb.command(`info symbol 0x${addr.toString(16)}`, 5000);
+        const resolved = where.success && where.output.trim() ? ` — ${where.output.trim()}` : "";
+        // The probe's own transcript is not appended: this is a cooked tool,
+        // and "Iterating through AP map to find AHB-AP" tells the caller
+        // nothing they asked for. probe_command is where raw output belongs.
+        return { content: [{ type: "text", text:
+          `Breakpoint set at 0x${addr.toString(16)}${resolved}` }] };
       }
     );
 
@@ -1061,8 +1082,9 @@ export class JLinkMcpServer {
 
     this.server.tool("rtt_read",
       "Read RTT log lines (clean, parsed Zephyr format). Non-destructive — reading does not consume " +
-      "the buffer. Returns the NEWEST lines by default; pass oldest:true for the start of the log, " +
-      "which is where boot output lives.",
+      "the buffer. Returns the NEWEST lines by default; oldest:true returns the start of the buffer. " +
+      "Note the buffer spans reflashes: its oldest lines may be from firmware you have since " +
+      "replaced. rtt_clear drops them.",
       {
         count: z.number().min(1).max(500).optional().describe("How many lines (default 50)"),
         oldest: z.boolean().optional().describe("Return the OLDEST lines instead of the newest — use this to see boot output"),
@@ -1462,6 +1484,18 @@ export class JLinkMcpServer {
     }
 
     if (restored.length) notes.push(`Restored: ${restored.join(", ")}.`);
+
+    // The RTT buffer is not cleared, deliberately — a ring buffer keeping what
+    // it already had is the normal contract, and the pre-flash log is often
+    // the reason you flashed. But it does mean the oldest lines now belong to
+    // firmware that is no longer on the chip, which is worth saying once
+    // rather than leaving someone to wonder why boot output looks wrong.
+    if (label === "flashing") {
+      const held = this.rttClient.getLines(100000).length;
+      if (held > 0) {
+        notes.push(`RTT buffer still holds ${held} lines from before the flash — rtt_clear drops them.`);
+      }
+    }
     if (failed.length) {
       notes.push(`COULD NOT RESTORE: ${failed.join("; ")}. Reconnect with gdb_connect before debugging further.`);
     }
