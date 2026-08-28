@@ -66,6 +66,17 @@ describe("capability hints", () => {
 });
 
 describe("host-side GDB commands", () => {
+  // Correction, paid for on hardware: letting these through while the target
+  // runs does not work. GDB is sitting in its own resume loop and is not
+  // reading stdin at all, so it makes no difference that the command would
+  // never have reached the remote —
+  //
+  //   07:39:18.822  [GDB] > 10 file /.../rtt-fixture.elf
+  //   07:39:28.824  <<<RAW gdb file /.../rtt-fixture.elf      (empty)
+  //
+  // twice, for the full ten-second timeout. So the list still marks what is
+  // worth halting for; it no longer claims these can be answered mid-flight.
+
   // The running-target guard exists because a synchronous remote stops reading
   // stdin while the target executes. That is a fact about the remote, and
   // these commands never reach it — GDB answers them from a symbol table it
@@ -89,7 +100,7 @@ describe("host-side GDB commands", () => {
     "info functions",
     "list main",
   ]) {
-    test(`allows "${cmd}" while the target runs`, () => {
+    test(`halts for "${cmd}" rather than refusing it`, () => {
       assert.equal(isHostSide(cmd), true);
     });
   }
@@ -102,8 +113,44 @@ describe("host-side GDB commands", () => {
     "info registers",     // needs the target's registers
     "monitor reset",
   ]) {
-    test(`still refuses "${cmd}" while the target runs`, () => {
+    test(`refuses "${cmd}" outright — halting would not make it valid`, () => {
       assert.equal(isHostSide(cmd), false, "this one genuinely needs the target");
     });
   }
+});
+
+describe("a command that never came back", () => {
+  // Completion is a result record carrying our token, so no output means GDB
+  // never answered. Empty output also contains no "^error", which is how this
+  // read as success — and how a `file` that sat through two ten-second
+  // timeouts reported "Symbols loaded:" with nothing after the colon, letting
+  // a wrong fix pass its own hardware test.
+  test("is reported as a failure, not as empty success", async () => {
+    const { GDBClient } = require("../../src/gdb/gdb-client");
+    const c = new GDBClient();
+    (c as any).connected = true;
+    (c as any).proc = { stdin: { write() {} } };
+    (c as any).sendCommand = async () => "";          // the timeout shape
+    (c as any).targetRunning = false;
+
+    const r = await (c as any).commandUnqueued("info line *0x0", 10);
+    assert.equal(r.success, false, "silence is not success");
+    assert.match(r.error ?? "", /did not answer/i);
+  });
+
+  test("a command needing the target is refused before it can time out", async () => {
+    // The guard runs first, so `bt` never reaches the timeout path at all —
+    // it is turned away in microseconds with an actionable message instead of
+    // sitting for ten seconds and coming back empty.
+    const { GDBClient } = require("../../src/gdb/gdb-client");
+    const c = new GDBClient();
+    (c as any).connected = true;
+    (c as any).proc = { stdin: { write() {} } };
+    (c as any).sendCommand = async () => { throw new Error("should never be sent"); };
+    (c as any).targetRunning = true;
+
+    const r = await (c as any).commandUnqueued("bt", 10);
+    assert.equal(r.success, false);
+    assert.match(r.error ?? "", /target is running/i);
+  });
 });

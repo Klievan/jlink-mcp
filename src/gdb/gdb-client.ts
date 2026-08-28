@@ -72,7 +72,7 @@ export class GDBClient {
 
   /**
    * Commands GDB answers from its own symbol table, without touching the
-   * target.
+   * target — so they are worth halting for rather than refusing.
    *
    * The running-target guard exists because a synchronous remote stops reading
    * stdin while the target executes — but that is a fact about the *remote*,
@@ -80,21 +80,57 @@ export class GDBClient {
    * source line are host-side operations on debug info that is already in
    * memory.
    *
-   * Refusing them was a real cost, not a theoretical one: `gdb_load` was
-   * turned away purely because the target happened to be running, which is
-   * the normal state of a device you have not halted yet. Loading symbols is
-   * the first thing anyone should do in a session and the last thing that
-   * should require ceremony.
+   * Being turned away was a real cost: `gdb_load` was refused purely because
+   * the target happened to be running, which is the normal state of a device
+   * nobody has halted yet, and loading symbols is the first thing anyone
+   * should do in a session.
    *
    *   [GDB] > (refused, target running) file /.../rtt-fixture.elf
    *
-   * Deliberately a narrow allow-list. `print` and `x` look host-side and are
-   * not — they read target memory — so they stay behind the guard.
+   * An earlier attempt simply let these through, on the reasoning that they
+   * never reach the remote. That was wrong, and hardware said so: `file` sat
+   * for the full ten-second timeout, twice, and returned nothing.
+   *
+   *   07:39:18.822  [GDB] > 10 file /.../rtt-fixture.elf
+   *   07:39:28.824  <<<RAW gdb file /.../rtt-fixture.elf      (empty)
+   *
+   * The reason is not that the command needs the target. It is that GDB is
+   * sitting in its own resume loop and is not reading stdin at all, so it
+   * makes no difference what the command would have done. Nothing gets
+   * through while the target runs — which is what the guard said in the first
+   * place. So halt, run it, and put the target back.
+   *
+   * Deliberately a narrow list. `print` and `x` look host-side and are not —
+   * they read target memory — so they are still refused outright.
    */
   private static isHostSide(cmd: string): boolean {
     return /^\s*(file|symbol-file|add-symbol-file|directory|list|info\s+(line|source|sources|functions|variables|scope|address|symbol|sharedlibrary))\b/i
       .test(cmd);
   }
+
+  /**
+   * Halt the target so a host-side command can be answered, and remember to
+   * put it back.
+   *
+   * Returns true when the caller may proceed. Only ever interrupts for the
+   * narrow set above, and only resumes what it stopped itself — a target the
+   * caller halted deliberately stays halted.
+   */
+  private async pauseFor(cmd: string): Promise<boolean> {
+    if (!GDBClient.isHostSide(cmd)) return false;
+
+    const stopped = await this.interrupt(5000);
+    if (!stopped.success) {
+      log(`[GDB] could not halt to run \`${cmd}\`: ${stopped.error ?? "interrupt failed"}`);
+      return false;
+    }
+    log(`[GDB] halted the target to answer \`${cmd}\`; will resume after`);
+    this.resumeAfterHostCommand = true;
+    return true;
+  }
+
+  /** Set when pauseFor() stopped the target and owes it a resume. */
+  private resumeAfterHostCommand = false;
   private stopEvent: string | null = null;
   private history: string[] = [];
   private maxHistory = 200;
@@ -261,7 +297,7 @@ export class GDBClient {
     // target stops, so waiting on it buys nothing but a timeout — and a
     // timeout returns empty output, which reads like a healthy quiet target
     // rather than "you need to halt first".
-    if (this.targetRunning && !GDBClient.isHostSide(cmd)) {
+    if (this.targetRunning && !(await this.pauseFor(cmd))) {
       // Log the refusal. A command that never reaches GDB is also never
       // logged by sendCommand, so a whole refused sequence leaves no trace at
       // all — which cost a hardware round: a reset path appeared not to run
@@ -326,6 +362,30 @@ export class GDBClient {
           stopReason: "running",
         };
       }
+    }
+
+    // Put the target back if we stopped it purely to ask GDB a question.
+    if (this.resumeAfterHostCommand) {
+      this.resumeAfterHostCommand = false;
+      await this.commandUnqueued("continue", 500);
+    }
+
+    // A command that never came back is not a success.
+    //
+    // Completion is a result record carrying our token, so its absence means
+    // GDB never answered — and an empty rawOutput contains no "^error"
+    // either, so this read as success with no output. That is how a `file`
+    // that sat through two ten-second timeouts reported "Symbols loaded:"
+    // with nothing after the colon, and how a wrong fix passed its own test.
+    if (rawOutput.trim() === "") {
+      return {
+        success: false,
+        output: "",
+        error: `GDB did not answer \`${cmd}\` within the timeout. ` +
+          (this.targetRunning
+            ? "The target is running, and a synchronous remote leaves GDB not reading stdin at all — halt first."
+            : "The connection may be wedged; try gdb_disconnect then gdb_connect."),
+      };
     }
 
     const success = !rawOutput.includes("^error");
