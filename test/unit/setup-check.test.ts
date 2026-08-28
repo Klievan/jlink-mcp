@@ -48,10 +48,23 @@ describe("deciding whether a probe is attached", () => {
   // which matched none of them. Both samples below are verbatim from real
   // runs — one from the hardware runner, one from a laptop with nothing
   // plugged in.
-  const connected = /connecting to j-link[\s.]*O\.K\./i;
+  const connected = /connecting to j-link\b[^\n]*?O\.K\./i;
 
-  test("recognises a probe that answered", () => {
+  // Every string below is verbatim from a real run. The first version of this
+  // check was written from one of them and shipped a false "no probe" on a
+  // board that worked — so all four live here now.
+  test("recognises the hardware runner's phrasing", () => {
     assert.equal(connected.test("Connecting to J-Link ...O.K."), true);
+  });
+
+  test("recognises the same probe on a laptop, which words it differently", () => {
+    // J-Link says "via USB" here and not on the runner. Nothing about the
+    // probe changed; only the sentence did.
+    assert.equal(connected.test("Connecting to J-Link via USB...O.K."), true);
+  });
+
+  test("does not read a wedged USB connection as a probe", () => {
+    assert.equal(connected.test("Connecting to J-Link via USB...FAILED: Cannot connect to J-Link."), false);
   });
 
   test("does not read a USB failure as a connection", () => {
