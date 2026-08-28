@@ -32,9 +32,12 @@ export class SvdRegistry {
   /** Human-readable reason the registry cannot answer, or null if it can. */
   unavailableReason(): string | null {
     if (!this.path) {
-      return "No SVD file configured. Set jlinkMcp.svdPath (VSCode) or SVD_PATH " +
-        "to a CMSIS-SVD file for your target. Vendors ship these; they are also " +
-        "in CMSIS device family packs and the cmsis-svd collection.";
+      // Short on purpose. This fires on three tools, and used to carry the
+      // full explanation on every call — forty-odd tokens of the same advice,
+      // repeated, crowding out the answer it was attached to. The server
+      // emits the how-to-fix once (see JLinkMcpServer.hint) and this stays
+      // the always-true reason the tool returned nothing.
+      return "No SVD configured, so peripherals cannot be decoded.";
     }
     this.load();
     return this.loadError;

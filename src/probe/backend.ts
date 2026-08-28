@@ -349,6 +349,15 @@ export abstract class ProbeBackend {
   supportsRTT(): boolean { return false; }
 
   /**
+   * The RTT control block address, when one was supplied.
+   *
+   * Undefined means the probe is finding it by scanning RAM — which works
+   * until a reset, and cannot be redone afterwards because the probe does not
+   * report back what it found.
+   */
+  getRttControlBlockAddress(): number | undefined { return undefined; }
+
+  /**
    * Restart host-side RTT collection after a target reset.
    *
    * A reset does not stop the target writing to its RTT buffer, but on J-Link

@@ -171,6 +171,17 @@ export class JLinkMcpServer {
           );
         }
 
+        // What this session is missing, once, at the moment it starts. Only
+        // the absent ones are listed; a fully configured session sees none of
+        // this.
+        const missing: string[] = [];
+        if (this.svdMissing) missing.push("SVD — peripheral reads stay raw hex; set SVD_PATH");
+        if (this.probe.getRttControlBlockAddress() === undefined && this.probe.supportsRTT()) {
+          missing.push("JLINK_RTT_ADDR — RTT cannot be recovered after a reset or flash");
+        }
+        missing.push('ELF — backtraces show ??; gdb_load { elfFile: "..." }');
+        steps.push(`\nNot loaded: ${missing.join(" · ")}`);
+
         return { content: [{ type: "text", text: steps.join("\n") }] };
       }
     );
@@ -493,7 +504,8 @@ export class JLinkMcpServer {
       { filter: z.string().optional().describe("Case-insensitive substring, e.g. 'uart' or 'timer'") },
       async ({ filter }) => {
         const why = this.svd.unavailableReason();
-        if (why) return { content: [{ type: "text", text: why }] };
+        if (why) return { content: [{ type: "text", text: why + this.hint("svd",
+          "Set SVD_PATH (or jlinkMcp.svdPath) to a CMSIS-SVD file for this part to get named fields and decoded values.") }] };
         const list = this.svd.listPeripherals(filter);
         if (list.length === 0) {
           return { content: [{ type: "text", text: `No peripherals match ${JSON.stringify(filter)}.` }] };
@@ -514,7 +526,8 @@ export class JLinkMcpServer {
       },
       async ({ peripheral, registers }) => {
         const why = this.svd.unavailableReason();
-        if (why) return { content: [{ type: "text", text: why }] };
+        if (why) return { content: [{ type: "text", text: why + this.hint("svd",
+          "Set SVD_PATH (or jlinkMcp.svdPath) to a CMSIS-SVD file for this part to get named fields and decoded values.") }] };
         const g = this.requireDevice(); if (g) return g;
         await this.ensureGdbSession();
 
@@ -567,7 +580,8 @@ export class JLinkMcpServer {
       },
       async ({ peripheral, register, value }) => {
         const why = this.svd.unavailableReason();
-        if (why) return { content: [{ type: "text", text: why }] };
+        if (why) return { content: [{ type: "text", text: why + this.hint("svd",
+          "Set SVD_PATH (or jlinkMcp.svdPath) to a CMSIS-SVD file for this part to get named fields and decoded values.") }] };
 
         const reg = this.svd.findRegister(peripheral, register);
         if (!reg) {
@@ -747,7 +761,15 @@ export class JLinkMcpServer {
       },
       async ({ full }) => {
         const result = await this.gdb.backtrace(full ?? false);
-        return { content: [{ type: "text", text: JLinkMcpServer.resultText(result, "(no backtrace available)") }] };
+        const text = JLinkMcpServer.resultText(result, "(no backtrace available)");
+
+        // Read the frames rather than tracking whether gdb_load was called:
+        // symbols loaded from a stale ELF still leave `??`, and the frames are
+        // what the caller is actually looking at.
+        const unresolved = /\?\?/.test(text);
+        return { content: [{ type: "text", text: text + (unresolved
+          ? this.hint("elf", 'No symbols: gdb_load { elfFile: "..." } for names and file:line.', true)
+          : "") }] };
       }
     );
 
@@ -796,7 +818,9 @@ export class JLinkMcpServer {
       async ({ count }) => {
         if (!this.rttClient.isConnected()) return { content: [{ type: "text", text: "RTT not connected. Use start_debug_session first." }] };
         const lines = this.rttClient.getLines(count ?? 50);
-        return { content: [{ type: "text", text: lines.length > 0 ? lines.join("\n") : "No RTT output yet." }] };
+        return { content: [{ type: "text", text: lines.length > 0
+          ? lines.join("\n")
+          : "No RTT output yet." + this.rttEmptyHint() }] };
       }
     );
 
@@ -809,7 +833,7 @@ export class JLinkMcpServer {
       },
       async ({ level, module, pattern, count }) => {
         const results = this.rttClient.search({ level, module, pattern, count: count ?? 50 });
-        if (results.length === 0) return { content: [{ type: "text", text: "No matches found" }] };
+        if (results.length === 0) return { content: [{ type: "text", text: "No matches found" + this.rttEmptyHint() }] };
         return { content: [{ type: "text", text: `Found ${results.length} matches:\n${results.map(formatLogLine).join("\n")}` }] };
       }
     );
@@ -891,6 +915,56 @@ export class JLinkMcpServer {
    * hardware: reading during a run returned the generic string while the
    * client had produced an actionable one.
    */
+  /**
+   * Capability hints already emitted this session.
+   *
+   * A hint is worth roughly twenty tokens. Repeating one every call is how a
+   * helpful line turns into noise that crowds out the output it was meant to
+   * annotate, so most fire once and then stay quiet.
+   */
+  private readonly hintsShown = new Set<string>();
+
+  /**
+   * A short note about something the session is missing, attached to the
+   * result that is worse for missing it.
+   *
+   * Deliberately at the point of degradation rather than in a preamble: a
+   * model reads the output of the call it just made, and may never read a
+   * banner from three calls ago. Two failure modes reported from real use —
+   * never loading the ELF, and never supplying an SVD — are both invisible
+   * unless the disappointing answer says what would have made it better.
+   *
+   * `repeat` is for the ELF hint alone. If a caller is still getting
+   * unresolved frames on its fourth backtrace, saying so again is the entire
+   * point; the others are advice, and advice ignored once is ignored.
+   */
+  private hint(key: string, text: string, repeat = false): string {
+    if (!repeat && this.hintsShown.has(key)) return "";
+    this.hintsShown.add(key);
+    return `\n\n${text}`;
+  }
+
+  /**
+   * Note for an RTT read that came back empty, when the control block address
+   * is unknown.
+   *
+   * Silence has two causes that look identical from here: a quiet device, and
+   * a probe that stopped collecting. The second happens at every reset and
+   * flash, and cannot be recovered without the address — which J-Link finds by
+   * scanning RAM and never reports back. So an empty read is the moment to
+   * mention it.
+   */
+  private rttEmptyHint(): string {
+    if (this.probe.getRttControlBlockAddress() !== undefined) return "";
+    return this.hint("rtt-addr",
+      "RTT empty. If it stopped after a reset or flash, set JLINK_RTT_ADDR to your _SEGGER_RTT symbol so it can be recovered.");
+  }
+
+  /** True when no SVD is loaded, so peripheral reads cannot be decoded. */
+  private get svdMissing(): boolean {
+    return !!this.svd.unavailableReason();
+  }
+
   private static resultText(
     r: { success?: boolean; output?: string; rawOutput?: string; error?: string; suggestedAction?: string },
     fallback: string
