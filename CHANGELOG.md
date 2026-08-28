@@ -1,5 +1,49 @@
 # Changelog
 
+## Unreleased
+
+Aimed at two things reported from real use: models never loaded the ELF, so
+every backtrace was bare addresses, and they reasoned about the hardware
+instead of asking it. Both turned out to have a cause in the server, not only
+in the model.
+
+### Added
+
+- **An `embedded-debugging` skill**, shipped as a Claude Code plugin
+  (`.claude-plugin/plugin.json` + `skills/`). Covers the two files that change
+  everything — the ELF for names, an SVD for meanings — the halt/read/resume
+  rule and its traps, workflows for crashes, hangs, peripherals and silent
+  devices, and a table pairing each tempting assumption with the tool call
+  that settles it. MCP itself has no skills primitive; its portable equivalent
+  is prompts, and this server ships four.
+- **Capability hints.** Tools now say what the session is missing, attached to
+  the answer that is worse for missing it: an unresolved backtrace names
+  `gdb_load`, peripheral tools name `SVD_PATH`, an empty RTT read names
+  `JLINK_RTT_ADDR`. Only absent capabilities are mentioned, and all but the
+  backtrace hint fire once a session. Net context cost is negative — the old
+  "no SVD" message was forty tokens of advice on three tools on every call.
+- **S4**, a hardware suite for debug symbols. The fixture ELF had been
+  exported and unused since the harness was written.
+
+### Fixed
+
+- **Loading symbols no longer requires a halted target.** `file` is answered
+  by GDB from debug info it already holds and never reaches the probe, but the
+  running-target guard refused it anyway — so the first thing anyone should do
+  in a session was rejected at exactly the moment anyone would do it, on a
+  device nobody had halted yet. A narrow allow-list of genuinely host-side
+  commands now passes through; `print` and `x` stay behind the guard because
+  they read target memory.
+- **`gdb_load` reported "Symbols loaded" for a load that was refused**, with
+  nothing after the colon. The caller then stops trying, and every later
+  backtrace is anonymous for a reason it has been told is already solved.
+- **Three README badges no longer rendered.** Shields retired the entire
+  visual-studio-marketplace family and there is no replacement, so the VS Code
+  badge makes no version claim and a release badge carries the version
+  instead. The Smithery badge and link were removed — that server was never
+  listed. The npm downloads badge was silently redirecting to a different
+  metric.
+
 ## 0.5.1
 
 Marketplace metadata only — no code changes, and nothing to gain by upgrading
