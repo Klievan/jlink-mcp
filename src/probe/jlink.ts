@@ -844,6 +844,20 @@ export class JLinkBackend extends ProbeBackend {
     this.config.device = device;
   }
 
+  /**
+   * Point the server at the firmware's RTT control block at runtime.
+   *
+   * Every tool that touches RTT tells people to set JLINK_RTT_ADDR, and until
+   * now the only way to do that was an environment variable read at startup —
+   * so a caller holding the exact value, from a symbol table it had just read,
+   * had nowhere to put it. Nagging about something you give no way to supply
+   * is worse than silence.
+   */
+  setRttControlBlockAddress(address: number): void {
+    log(`[J-Link] RTT control block set to 0x${address.toString(16)}`);
+    this.config.rttControlBlockAddress = address;
+  }
+
   async listDevices(): Promise<CommandResult> {
     // Run ShowEmuList without specifying a device to see connected probes
     const args = ["-NoGui", "1"];
@@ -870,6 +884,17 @@ export class JLinkBackend extends ProbeBackend {
   getRTTPort(): number { return this.config.rttTelnetPort; }
 
   getRttControlBlockAddress(): number | undefined { return this.config.rttControlBlockAddress; }
+
+  /**
+   * DHCSR bit 17 (S_HALT) is the core's own answer. Read it rather than
+   * tracking what we think we last did to the target — GDB, an assistant, or
+   * another tool may have stopped it since.
+   */
+  async isTargetRunning(): Promise<boolean | undefined> {
+    const dhcsr = await this.readWord32(0xe000edf0);
+    if (dhcsr === null) return undefined;
+    return (dhcsr & (1 << 17)) === 0;
+  }
 
   checkInstallation(): { ok: boolean; detail: string; suggestedAction?: string } {
     const exe = this.jlinkExe;

@@ -370,6 +370,18 @@ export abstract class ProbeBackend {
   getRttControlBlockAddress(): number | undefined { return undefined; }
 
   /**
+   * Is the core executing? Undefined when the backend cannot tell.
+   *
+   * Distinguishing "not running" from "cannot tell" matters: a tool that
+   * treats the second as the first will happily explain a silence it has no
+   * evidence for.
+   */
+  async isTargetRunning(): Promise<boolean | undefined> { return undefined; }
+
+  /** Set the RTT control block address at runtime. Not every probe has one. */
+  setRttControlBlockAddress(_address: number): void { /* unsupported by default */ }
+
+  /**
    * Restart host-side RTT collection after a target reset.
    *
    * A reset does not stop the target writing to its RTT buffer, but on J-Link
