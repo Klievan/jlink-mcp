@@ -1,5 +1,65 @@
 # Changelog
 
+## 0.7.0
+
+Three rounds of pointing a fresh agent at real hardware and reading its
+complaints. Most of what it found was tools stating things they had not
+checked — and two of its own most confident findings turned out to be
+misdiagnoses, which is its own lesson about how these reports should be read.
+
+### Added
+
+- **`rtt_status`** — reads SEGGER's control block and reports what the target
+  has written against what the probe has collected. The skill had been telling
+  people to go and read those pointers when a device goes quiet, and nothing
+  could. It refuses to print pointer values when the control block ID is
+  absent, because those words are not pointers, they are whatever is in RAM.
+- **`set_svd_path`** and **`set_rtt_address`** — runtime setters mirroring
+  `set_device`. Every tool nagged about `SVD_PATH` and `JLINK_RTT_ADDR` while
+  offering no way to supply either, which is worse than silence. Someone
+  holding the exact values, read from a symbol table minutes earlier, had
+  nowhere to put them.
+- **`rtt_read { oldest: true }`** — only the newest lines were ever reachable,
+  so a boot banner scrolled away the moment a device got chatty.
+
+### Fixed — tools that stated what they had not checked
+
+- **`diagnose_crash` invented a fault on a healthy device.** The stacked
+  exception frame exists only when the CPU takes an exception; with none, the
+  words at SP are ordinary locals. It read them anyway and announced a
+  faulting PC outside flash, three lines after "No faults detected". It also
+  halted the core without saying so — which is how `rtt_status` came to report
+  "Silence here is a quiet device" about a CPU another tool had stopped.
+- **A watchpoint firing was reported as a bare `SIGTRAP`**, with no
+  expression and no old/new value. The hardware worked; the evidence was being
+  rendered away, and 25 minutes went into concluding watchpoints were broken.
+- **`probe_command` swapped the probe's own words for advice.** It is the
+  escape hatch people reach for when the cooked tools have failed them, and it
+  was returning "Recovery failed. Try: 1) reset with halt..." in place of a
+  full J-Link transcript.
+- **`gdb_server_start` asserted a cause it could not know**, telling people to
+  hunt for a competing process while the server's own words were "Could not
+  connect to target" and the same output proved the probe was not contended.
+- **`check_setup` reported no probe on a working one.** J-Link words the same
+  success two ways depending on the machine, and the check was written from
+  one of them.
+- **`gdb_backtrace` told people to load symbols they had already loaded.** A
+  trailing `?? ()` frame is the unwinder running past `main` and appears in
+  healthy output; only frame #0 says anything.
+- **`snapshot { rttLines: 0 }` returned 495 KB.** Zero meant "unlimited" to
+  the buffer read.
+- **The server announced version 0.3.2** while the package was 0.6.0 — three
+  releases stale, hardcoded. It reads `package.json` now, and a test bans
+  version literals in `src/` outright.
+- **`search_devices` connected to the target** to read a list compiled into
+  the DLL. It no longer autoconnects, and the list is cached per J-Link
+  installation: 326 ms cold, 9 ms warm.
+- **`set_breakpoint` reported where it was asked for, not where it landed.**
+  A breakpoint set by file:line can resolve into the middle of a loop.
+- **A peripheral filter that matched nothing said nothing useful** — it now
+  lists what the part actually has. A chip whose I2C blocks are called TWIM
+  will never answer to "i2c", and the caller had no way to discover that.
+
 ## 0.6.0
 
 Aimed at two things reported from real use: models never loaded the ELF, so
