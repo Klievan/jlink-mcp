@@ -287,6 +287,28 @@ inspection, and stepping by source line rather than by instruction.
 | `probe_command` | Execute raw probe commands |
 | `get_config` | Current probe and server configuration |
 
+## The skill
+
+The tools tell a model *what it can do*. They do not tell it what is worth
+doing, and two things go wrong constantly without that: models never think to
+load the ELF, so every backtrace is bare addresses; and they reason about what
+the hardware should be doing instead of spending one call asking it.
+
+`skills/embedded-debugging/SKILL.md` is a Claude Code skill that covers both —
+the two files that change everything (ELF for names, SVD for meanings), the
+halt/read/resume rule, workflows for crashes, hangs, peripherals and silent
+devices, and a table of beliefs paired with the tool call that actually checks
+each one.
+
+Claude Code picks it up if you install this repo as a plugin
+(`.claude-plugin/plugin.json`), or you can copy the directory into
+`.claude/skills/` in your firmware project. MCP itself has no notion of skills
+— its portable equivalent is prompts, and this server ships four.
+
+Its claims are tested. `test/hil/s04-symbols.test.ts` proves on real silicon
+that a backtrace without symbols has no function names, that loading the ELF
+gives them, and that a symbols-only load does not reprogram the device.
+
 ## Multi-Probe Support
 
 jlink-mcp supports multiple debug probe backends through a common `ProbeBackend` abstraction:
