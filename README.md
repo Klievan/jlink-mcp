@@ -296,8 +296,15 @@ remembering what it did: the MCP server runs in a separate process, so an
 LLM-started server is invisible to it.
 
 So it watches the GDB port instead, which is true whoever is responsible. When
-something is listening the status bar turns amber and says **J-Link: GDB
-server running**; clicking it offers to stop the server and free the probe.
+something is listening the status bar turns amber and reads
+**J-Link · MCP · 47m** — who started it, and how long ago. Those are the two
+facts that turn "something has the probe" into "the assistant has had it since
+before lunch". Clicking offers to stop it.
+
+The tooltip carries the rest: device, ports, whether RTT is up, and why it
+matters. And it never claims an uptime it did not watch — a server that was
+already running when the window opened is reported as *known about* for that
+long, not *up* for it.
 
 It will not kill a process it cannot identify as a J-Link GDB server. A
 listening port proves something is there, not that it is ours.

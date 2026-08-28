@@ -82,3 +82,75 @@ describe("what we are willing to kill", () => {
     assert.equal(looksLikeGdbServer("/opt/SEGGER/JLink/JLinkExe -device NRF52840_XXAA"), false);
   });
 });
+
+import { formatDuration, renderGdbStatus } from "../../src/utils/gdb-server-probe";
+
+describe("how long it has been up", () => {
+  test("stays short enough for a status bar", () => {
+    assert.equal(formatDuration(12_000), "12s");
+    assert.equal(formatDuration(47 * 60_000), "47m");
+    assert.equal(formatDuration(125 * 60_000), "2h 5m");
+  });
+
+  test("does not render negative time from a clock skew", () => {
+    assert.equal(formatDuration(-5000), "0s");
+  });
+});
+
+describe("what the status bar says", () => {
+  const base = { running: true, startedByExtension: false, elapsedMs: 47 * 60_000,
+                 observedStart: true, device: "nRF52840_XXAA", gdbPort: 2331,
+                 rttPort: 19021, rttListening: true };
+
+  test("names who started it, which is the whole complaint", () => {
+    // A session you opened is one you remember. The one an assistant opened is
+    // the one that gets forgotten and then blocks every other tool.
+    assert.match(renderGdbStatus(base).text, /MCP/);
+    assert.match(renderGdbStatus({ ...base, startedByExtension: true }).text, /you/);
+  });
+
+  test("puts the elapsed time where it will be read", () => {
+    assert.match(renderGdbStatus(base).text, /47m/);
+  });
+
+  test("keeps the bar text short", () => {
+    // VSCode truncates a long status bar item, and a truncated warning is a
+    // warning nobody reads.
+    const t = renderGdbStatus(base).text.replace(/\$\([a-z-]+\)/g, "");
+    assert.ok(t.length <= 28, `status text is ${t.length} chars: ${t}`);
+  });
+
+  test("does not claim an uptime it did not watch", () => {
+    // If the server was already running when the window opened, all we
+    // honestly know is how long we have known — not how long it has been up.
+    const seen = renderGdbStatus({ ...base, observedStart: false });
+    assert.match(seen.tooltip, /already running when the extension started/i);
+    assert.ok(!/\bUp 47m\b/.test(seen.tooltip), "must not present a lower bound as an uptime");
+
+    assert.match(renderGdbStatus(base).tooltip, /Up 47m/);
+  });
+
+  test("the tooltip carries the detail the bar has no room for", () => {
+    const { tooltip } = renderGdbStatus(base);
+    assert.match(tooltip, /nRF52840_XXAA/);
+    assert.match(tooltip, /2331/);
+    assert.match(tooltip, /19021/);
+    assert.match(tooltip, /one client at a time/i, "should explain why it matters");
+  });
+
+  test("says when the device is not configured rather than leaving a blank", () => {
+    assert.match(renderGdbStatus({ ...base, device: undefined }).tooltip, /not configured/i);
+  });
+
+  test("reports RTT being down without implying the server is", () => {
+    const { tooltip } = renderGdbStatus({ ...base, rttListening: false });
+    assert.match(tooltip, /RTT: not listening/);
+    assert.match(tooltip, /GDB server running/);
+  });
+
+  test("an idle probe reads as free, and offers status rather than a kill", () => {
+    const { text, tooltip } = renderGdbStatus({ ...base, running: false });
+    assert.match(text, /debug-disconnect/);
+    assert.match(tooltip, /probe is free/i);
+  });
+});
