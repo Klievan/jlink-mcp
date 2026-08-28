@@ -83,3 +83,27 @@ describe("shipped configs are portable", () => {
     assert.ok(entry.args.includes(pkg.name), "should launch the published package");
   });
 });
+
+describe("the README does not lie about the tool count", () => {
+  // It said 31 for months while the server had 44. A number that specific
+  // reads as checked, so a stale one is worse than none — and the install
+  // section it sat next to was stale in the same way, telling people to clone
+  // and hand-write four JSON files long after the package was on npm.
+  test("matches the tools actually registered", () => {
+    const src = fs.readFileSync(path.join(root, "src/mcp/server.ts"), "utf8");
+    const registered = (src.match(/this\.server\.tool\(/g) ?? []).length;
+    const readme = fs.readFileSync(path.join(root, "README.md"), "utf8");
+    const claimed = Number((readme.match(/## Tools \((\d+)\)/) ?? [])[1]);
+    assert.equal(claimed, registered,
+      `README says ${claimed} tools, server.ts registers ${registered}`);
+  });
+
+  test("the install section is near the top, where someone stuck will look", () => {
+    // It had drifted to line 561, below Environment Variables and Design
+    // Decisions. Good instructions nobody reaches are not instructions.
+    const lines = fs.readFileSync(path.join(root, "README.md"), "utf8").split("\n");
+    const at = lines.findIndex((l) => /^## Installing/.test(l));
+    assert.ok(at > 0, "there should be an Installing section");
+    assert.ok(at < 200, `Installing is at line ${at + 1}; too far down to find`);
+  });
+});

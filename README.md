@@ -117,64 +117,51 @@ Instead of manually typing J-Link commands, your AI assistant can:
 
 > Also supports **OpenOCD** (ST-Link, CMSIS-DAP, FTDI) and **Black Magic Probe** backends.
 
-## Quick Start
+## Installing
 
-### Claude Desktop
+You need the [SEGGER J-Link software](https://www.segger.com/downloads/jlink/)
+— that is what this server drives — a probe connected to an ARM Cortex-M
+target, and Node 18+. For the other backends, OpenOCD or `arm-none-eabi-gdb`
+instead.
 
-Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json`):
-
-```json
-{
-  "mcpServers": {
-    "jlink": {
-      "command": "node",
-      "args": ["/path/to/jlink-mcp/out/mcp/standalone.js"],
-      "env": {
-        "JLINK_DEVICE": "nRF52840_XXAA"
-      }
-    }
-  }
-}
-```
-
-### Claude Code
-
-Add `.mcp.json` to your project root:
-
-```json
-{
-  "mcpServers": {
-    "jlink": {
-      "command": "node",
-      "args": ["out/mcp/standalone.js"],
-      "cwd": "/path/to/jlink-mcp",
-      "env": {
-        "JLINK_DEVICE": "nRF52840_XXAA"
-      }
-    }
-  }
-}
-```
-
-### VSCode Extension
-
-Install the extension (requires VSCode 1.110+, matching `engines.vscode`). It auto-registers the MCP server via the native `vscode.lm` API. Configure the device in settings:
+**Claude Code** — from the plugin marketplace. This brings the
+`embedded-debugging` skill along with the server, which is what stops an
+assistant guessing at your hardware:
 
 ```
-jlinkMcp.jlink.device = "nRF52840_XXAA"
+/plugin marketplace add Klievan/jlink-mcp
+/plugin install jlink-mcp
 ```
 
-Copilot Chat and Claude in VSCode will automatically discover all 31 tools.
+**Any other agent** — point it at this repository and ask it to set itself up:
 
-### From Source
+> Install the MCP server at https://github.com/Klievan/jlink-mcp and configure
+> it for my board.
 
-```bash
-git clone https://github.com/Klievan/jlink-mcp.git
-cd jlink-mcp
-npm install
-npm run compile
-JLINK_DEVICE=nRF52840_XXAA node out/mcp/standalone.js
+It will find what it needs here. If you would rather do it by hand, the server
+is on npm and needs no build step: `npx -y jlink-mcp`, with `JLINK_DEVICE` set
+to your target. [`mcp-config.json`](mcp-config.json) is a config you can paste.
+
+**VS Code** — install
+[the extension](https://marketplace.visualstudio.com/items?itemName=Klievan.jlink-mcp).
+It registers the server for Copilot Chat, Claude, and any MCP-aware client, so
+there is nothing to configure.
+
+### Then check it
+
+Ask for `check_setup`. One call, and it says what is missing and what to do:
+
 ```
+Not ready to debug yet.
+
+OK    probe software — J-Link software found at /Applications/SEGGER/JLink
+BLOCK probe — none detected (Connecting to J-Link via USB...FAILED). Check the USB cable.
+BLOCK target device — not set. Find the exact name with search_devices, then set_device.
+note  SVD — not loaded, so peripheral reads stay raw hex. Set SVD_PATH to a CMSIS-SVD file.
+```
+
+You do not need your device's exact part number up front. `search_devices`
+searches all 9800 that J-Link supports, by part number, manufacturer, or core.
 
 ## Tools (44)
 
@@ -404,7 +391,7 @@ src/
 │   ├── blackmagic.ts   # Black Magic Probe implementation
 │   └── factory.ts      # Probe creation from config
 ├── mcp/
-│   ├── server.ts       # MCP server (31 tools, 4 resources, 4 prompts)
+│   ├── server.ts       # MCP server (44 tools, 4 resources, 4 prompts)
 │   └── standalone.ts   # Standalone entry (stdio transport)
 ├── rtt/
 │   └── rtt-client.ts   # RTT client with ANSI stripping + Zephyr log parsing
@@ -557,62 +544,6 @@ npm run test:hil  # hardware tier; needs HIL=1 and a probe
 | `BMP_GDB_PATH` | `arm-none-eabi-gdb` | Path to GDB binary |
 | `BMP_SERIAL_PORT` | `/dev/ttyACM0` | BMP serial port |
 | `BMP_TARGET_INDEX` | `1` | Target index after scan |
-
-## Installing
-
-You need the [SEGGER J-Link software](https://www.segger.com/downloads/jlink/)
-installed — that is what this server drives — and a probe plugged in. Then pick
-whichever line matches your setup:
-
-**Claude Code** — one command:
-
-```bash
-claude mcp add jlink -- npx -y jlink-mcp
-```
-
-**Claude Code, with the debugging skill** — recommended, since the skill is
-what stops an assistant guessing at hardware:
-
-```
-/plugin marketplace add Klievan/jlink-mcp
-/plugin install jlink-mcp
-```
-
-**VS Code** — install
-[the extension](https://marketplace.visualstudio.com/items?itemName=Klievan.jlink-mcp).
-It registers the server for Copilot Chat, Claude, and any MCP-aware client, so
-there is no config file to write.
-
-**Anything else** — point your client at `npx -y jlink-mcp`. See
-[`mcp-config.json`](mcp-config.json) for a config you can paste.
-
-### Then check it
-
-```
-check_setup
-```
-
-One call, and it tells you what is missing and what to do about it:
-
-```
-Not ready to debug yet.
-
-OK    probe software — J-Link software found at /Applications/SEGGER/JLink
-BLOCK probe — none detected (Connecting to J-Link via USB...FAILED). Check the USB cable.
-BLOCK target device — not set. Find the exact name with search_devices, then set_device.
-note  SVD — not loaded, so peripheral reads stay raw hex. Set SVD_PATH to a CMSIS-SVD file.
-```
-
-You do not need to know your device's exact name up front — `search_devices`
-searches all 9800 J-Link supports by part number, manufacturer, or core.
-
-## Prerequisites
-
-- **[SEGGER J-Link Software](https://www.segger.com/downloads/jlink/)** installed (JLinkExe, JLinkGDBServer)
-- A J-Link debug probe connected to an ARM Cortex-M target
-- Node.js 18+
-
-For other backends: OpenOCD or arm-none-eabi-gdb as appropriate.
 
 ## Contributing
 
