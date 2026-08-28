@@ -57,3 +57,29 @@ describe("release manifests agree with each other", () => {
     }
   });
 });
+
+describe("shipped configs are portable", () => {
+  // Both of these were tracked with an absolute path into one developer's home
+  // directory, so anyone who cloned the repo got a config that could not work
+  // and gave no clue why.
+  for (const f of ["mcp-config.json", ".mcp.json"]) {
+    test(`${f} has no machine-specific paths`, () => {
+      const raw = fs.readFileSync(path.join(root, f), "utf8");
+      assert.ok(!/\/Users\/|\/home\/|[A-Z]:\\\\/.test(raw), `${f} contains an absolute path`);
+    });
+
+    test(`${f} is valid JSON with an mcpServers block`, () => {
+      const d = read(f);
+      assert.ok(d.mcpServers, "clients look for mcpServers");
+      const entry = Object.values(d.mcpServers)[0] as any;
+      assert.ok(entry.command, "needs a command to launch");
+    });
+  }
+
+  test("the example config uses the published package, not a build path", () => {
+    // Someone pasting this into a client has not built anything.
+    const entry = Object.values(read("mcp-config.json").mcpServers)[0] as any;
+    assert.equal(entry.command, "npx");
+    assert.ok(entry.args.includes(pkg.name), "should launch the published package");
+  });
+});
