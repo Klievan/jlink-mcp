@@ -1,0 +1,41 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.Klievan/jlink-mcp",
+  "title": "J-Link MCP",
+  "description": "Debug embedded firmware on real hardware: J-Link probes, Cortex-M faults, RTT logs, GDB.",
+  "version": "0.6.0",
+  "websiteUrl": "https://github.com/Klievan/jlink-mcp",
+  "repository": {
+    "url": "https://github.com/Klievan/jlink-mcp",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "jlink-mcp",
+      "version": "0.6.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "JLINK_DEVICE",
+          "description": "Target device name, exactly as J-Link spells it (e.g. nRF52840_XXAA, STM32F407VG). Use the search_devices tool to find it.",
+          "isRequired": true
+        },
+        {
+          "name": "JLINK_SERIAL",
+          "description": "Serial number of a specific probe, when more than one is attached."
+        },
+        {
+          "name": "SVD_PATH",
+          "description": "CMSIS-SVD file for the target. Without it, peripheral reads are undecoded hex."
+        },
+        {
+          "name": "JLINK_RTT_ADDR",
+          "description": "Address of the firmware's _SEGGER_RTT symbol. Lets RTT survive a reset or flash."
+        }
+      ]
+    }
+  ]
+}

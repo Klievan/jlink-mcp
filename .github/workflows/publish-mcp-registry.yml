@@ -1,0 +1,45 @@
+# Publish this server to the MCP registry.
+#
+# Runs on a release tag. Authentication is GitHub OIDC against the
+# io.github.Klievan namespace, so there is no token to store or rotate —
+# the workflow's identity is the proof of ownership.
+name: Publish to MCP registry
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      # Required for OIDC. Without it, login fails with an auth error that
+      # reads like a bad namespace.
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      # Fail here rather than at the registry if the manifests have drifted.
+      # A version mismatch between server.json and package.json is rejected on
+      # publish, and the message does not say which file is wrong.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm ci
+      - run: npm test
+
+      - name: Check server.json matches the tag
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          manifest=$(node -p "require('./server.json').version")
+          if [ "$tag" != "$manifest" ]; then
+            echo "::error::tag $tag does not match server.json version $manifest"
+            exit 1
+          fi
+
+      - name: Publish
+        run: |
+          npx --yes mcp-publisher login github-oidc
+          npx --yes mcp-publisher publish
