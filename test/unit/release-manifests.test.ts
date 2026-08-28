@@ -68,6 +68,22 @@ describe("shipped configs are portable", () => {
       assert.ok(!/\/Users\/|\/home\/|[A-Z]:\\\\/.test(raw), `${f} contains an absolute path`);
     });
 
+    test(`${f} names no specific target device`, () => {
+      // A path is not the only machine-specific thing a config can carry.
+      // .mcp.json ships with the plugin, so a device baked into it is wrong
+      // for every user who is not the person who committed it — and it
+      // defeats check_setup / search_devices / set_device, which exist
+      // precisely so nobody has to guess.
+      //
+      // This file carried a hardcoded device from its first commit in April.
+      // A test written the same day for hardcoded *paths* looked straight at
+      // it and did not see the hardware.
+      const entry = Object.values(read(f).mcpServers)[0] as any;
+      const device = entry.env?.JLINK_DEVICE;
+      assert.ok(!device || device === "Unspecified",
+        `${f} pins JLINK_DEVICE to ${JSON.stringify(device)}; that is per-user config`);
+    });
+
     test(`${f} is valid JSON with an mcpServers block`, () => {
       const d = read(f);
       assert.ok(d.mcpServers, "clients look for mcpServers");

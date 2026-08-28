@@ -1,13 +1,9 @@
 {
+  "_comment": "Ships with the plugin, so it deliberately names no device — that is per-user. Set JLINK_DEVICE in your environment, or just start the server and use check_setup, search_devices and set_device.",
   "mcpServers": {
     "jlink": {
       "command": "node",
-      "args": [
-        "out/mcp/standalone.js"
-      ],
-      "env": {
-        "JLINK_DEVICE": "nRF54LM20B_M33"
-      }
+      "args": ["out/mcp/standalone.js"]
     }
   }
 }
