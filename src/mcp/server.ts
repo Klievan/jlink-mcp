@@ -59,7 +59,14 @@ export class JLinkMcpServer {
       return {
         content: [{
           type: "text",
-          text: `ERROR: No target device configured for ${this.probe.displayName}.\n\nBefore using debugging tools, you must set the target device. Please:\n1. Call list_devices to scan for connected probes\n2. Call set_device with the correct device name (e.g., "nRF52840_XXAA", "STM32F407VG")\n\nCommon device names: nRF52840_XXAA, nRF5340_xxAA_APP, STM32F407VG, STM32L476RG, STM32H743ZI, RP2040_M0_0`,
+          // Points at the tool that answers this rather than listing six part
+          // numbers and hoping one of them is the reader's board. Guessing is
+          // the thing that fails like broken hardware.
+          text: `ERROR: No target device configured for ${this.probe.displayName}.\n\n` +
+            `Find the exact name, then set it:\n` +
+            `1. search_devices { query: "stm32f4" } — searches every device this probe supports\n` +
+            `2. set_device with the name exactly as it comes back\n\n` +
+            `check_setup reports everything else that needs doing.`,
         }],
       };
     }
@@ -88,6 +95,70 @@ export class JLinkMcpServer {
           result.output || result.rawOutput || "(no output)",
         ];
         return { content: [{ type: "text", text: lines.join("\n") }] };
+      }
+    );
+
+    this.server.tool(
+      "check_setup",
+      "Check that everything needed to debug is in place: the probe software, a connected probe, a target " +
+      "device name, and the optional files that make output readable. Run this first when anything fails, " +
+      "or when starting on a machine for the first time.",
+      {},
+      async () => {
+        const lines: string[] = [];
+        let blocked = false;
+
+        // Ordered so the first failure is the one that actually blocks. A
+        // missing SVD matters far less than a missing J-Link install, and a
+        // report that leads with the trivia buries the answer.
+        const install = probe.checkInstallation();
+        lines.push(install.ok
+          ? `OK    probe software — ${install.detail}`
+          : `BLOCK probe software — ${install.detail}\n      ${install.suggestedAction ?? ""}`);
+        blocked ||= !install.ok;
+
+        if (install.ok) {
+          const scan = await probe.listDevices();
+
+          // Require the success line rather than hunting for failure strings.
+          // The first draft did the latter and reported "connected" on a
+          // machine with no probe at all, because "FAILED: Failed to open DLL"
+          // matched none of the phrases it knew — the same enumerate-the-
+          // failures mistake this codebase has made before. A probe that is
+          // there says so:
+          //
+          //   with a probe   : Connecting to J-Link ...O.K.
+          //   without        : Connecting to J-Link via USB...FAILED: ...
+          const found = /connecting to j-link[\s.]*O\.K\./i.test(scan.rawOutput || scan.output);
+          const why = (scan.rawOutput || scan.output).split("\n")
+            .find((l) => /fail|error|cannot/i.test(l))?.trim();
+          lines.push(found
+            ? `OK    probe — connected`
+            : `BLOCK probe — none detected${why ? ` (${why})` : ""}. Check the USB cable, and that no ` +
+              `other tool holds it — a J-Link serves one client at a time.`);
+          blocked ||= !found;
+        }
+
+        const device = probe.getDeviceName();
+        const haveDevice = probe.isDeviceConfigured();
+        lines.push(haveDevice
+          ? `OK    target device — ${device}`
+          : `BLOCK target device — not set. Find the exact name with search_devices, then set_device. ` +
+            `The name must match exactly; a wrong one fails like broken hardware.`);
+        blocked ||= !haveDevice;
+
+        // Not blocking. These cost you readable output, not a working session.
+        const svdWhy = this.svd.unavailableReason();
+        lines.push(svdWhy
+          ? `note  SVD — not loaded, so peripheral reads stay raw hex. Set SVD_PATH to a CMSIS-SVD file.`
+          : `OK    SVD — loaded`);
+        lines.push(probe.getRttControlBlockAddress() === undefined
+          ? `note  JLINK_RTT_ADDR — not set, so RTT cannot be recovered after a reset or flash.`
+          : `OK    JLINK_RTT_ADDR — set`);
+        lines.push(`note  ELF — load one with gdb_load for named backtraces; nothing to check until you do.`);
+
+        return { content: [{ type: "text", text:
+          (blocked ? "Not ready to debug yet.\n\n" : "Ready to debug.\n\n") + lines.join("\n") }] };
       }
     );
 

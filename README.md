@@ -176,7 +176,7 @@ npm run compile
 JLINK_DEVICE=nRF52840_XXAA node out/mcp/standalone.js
 ```
 
-## Tools (43)
+## Tools (44)
 
 ### Workflow Tools (start here)
 
@@ -560,21 +560,51 @@ npm run test:hil  # hardware tier; needs HIL=1 and a probe
 
 ## Installing
 
+You need the [SEGGER J-Link software](https://www.segger.com/downloads/jlink/)
+installed — that is what this server drives — and a probe plugged in. Then pick
+whichever line matches your setup:
+
+**Claude Code** — one command:
+
 ```bash
-npx jlink-mcp                     # standalone MCP server
+claude mcp add jlink -- npx -y jlink-mcp
 ```
 
-Or as a Claude Code plugin, which brings the `embedded-debugging` skill with
-it:
+**Claude Code, with the debugging skill** — recommended, since the skill is
+what stops an assistant guessing at hardware:
 
 ```
 /plugin marketplace add Klievan/jlink-mcp
 /plugin install jlink-mcp
 ```
 
-The VS Code extension is on the
-[Marketplace](https://marketplace.visualstudio.com/items?itemName=Klievan.jlink-mcp)
-and registers the server automatically for any MCP-aware client.
+**VS Code** — install
+[the extension](https://marketplace.visualstudio.com/items?itemName=Klievan.jlink-mcp).
+It registers the server for Copilot Chat, Claude, and any MCP-aware client, so
+there is no config file to write.
+
+**Anything else** — point your client at `npx -y jlink-mcp`. See
+[`mcp-config.json`](mcp-config.json) for a config you can paste.
+
+### Then check it
+
+```
+check_setup
+```
+
+One call, and it tells you what is missing and what to do about it:
+
+```
+Not ready to debug yet.
+
+OK    probe software — J-Link software found at /Applications/SEGGER/JLink
+BLOCK probe — none detected (Connecting to J-Link via USB...FAILED). Check the USB cable.
+BLOCK target device — not set. Find the exact name with search_devices, then set_device.
+note  SVD — not loaded, so peripheral reads stay raw hex. Set SVD_PATH to a CMSIS-SVD file.
+```
+
+You do not need to know your device's exact name up front — `search_devices`
+searches all 9800 J-Link supports by part number, manufacturer, or core.
 
 ## Prerequisites
 

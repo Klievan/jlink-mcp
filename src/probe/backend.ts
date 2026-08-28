@@ -322,6 +322,18 @@ export abstract class ProbeBackend {
   abstract startGDBServer(): Promise<{ success: boolean; message: string }>;
   abstract stopGDBServer(): { success: boolean; message: string };
   abstract isGDBServerRunning(): boolean;
+
+  /**
+   * Is the probe's own software installed and runnable?
+   *
+   * Checked before anything is spawned, because the failure otherwise is
+   * `spawn JLinkExe ENOENT` — which names a binary the reader has never heard
+   * of and says nothing about what to install. That is the first thing a new
+   * user hits, and it reads like the extension is broken.
+   */
+  checkInstallation(): { ok: boolean; detail: string; suggestedAction?: string } {
+    return { ok: true, detail: `${this.displayName}: no installation check implemented` };
+  }
   abstract getGDBServerStatus(): GDBServerInfo;
   abstract getGDBServerOutput(lines?: number): string[];
 

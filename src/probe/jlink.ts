@@ -838,6 +838,34 @@ export class JLinkBackend extends ProbeBackend {
 
   getRttControlBlockAddress(): number | undefined { return this.config.rttControlBlockAddress; }
 
+  checkInstallation(): { ok: boolean; detail: string; suggestedAction?: string } {
+    const exe = this.jlinkExe;
+    // An absolute path we can test, or a bare name we are trusting to PATH.
+    if (path.isAbsolute(exe)) {
+      return fs.existsSync(exe)
+        ? { ok: true, detail: `J-Link software found at ${this.config.installDir}` }
+        : {
+            ok: false,
+            detail: `JLinkExe not found at ${exe}`,
+            suggestedAction: "Set jlinkMcp.jlink.installDir (or JLINK_INSTALL_DIR) to your SEGGER J-Link directory.",
+          };
+    }
+
+    const onPath = (process.env.PATH ?? "").split(path.delimiter)
+      .some((d) => d && fs.existsSync(path.join(d, exe)));
+    return onPath
+      ? { ok: true, detail: `${exe} found on PATH` }
+      : {
+          ok: false,
+          detail: "The SEGGER J-Link software is not installed, or not where this server looked.",
+          suggestedAction:
+            "Install the J-Link Software and Documentation Pack from " +
+            "https://www.segger.com/downloads/jlink/ — it provides JLinkExe and JLinkGDBServer, which " +
+            "this server drives. If it is already installed somewhere unusual, set JLINK_INSTALL_DIR " +
+            "(or jlinkMcp.jlink.installDir) to that directory.",
+        };
+  }
+
   /**
    * Every device name this J-Link installation accepts.
    *
