@@ -1,0 +1,5 @@
+"Manufacturer", "Device", "Core", {Flash areas}, {RAM areas}
+"Nordic Semi", "nRF52840_xxAA", "Cortex-M4", { {0x00000000, 0x00100000}, {0x10001000, 0x00001000} }, {0x20000000, 0x00040000}
+"Nordic Semi", "nRF5340_xxAA_APP", "Cortex-M33", { {0x00FF8000, 0x00001000}, {0x00000000, 0x00100000} }, {0x20000000, 0x00080000}
+"ST", "STM32F407IE", "Cortex-M4", {0x08000000, 0x00080000}, {0x20000000, 0x00020000}
+"ST", "STM32F407IG", "Cortex-M4", {0x08000000, 0x00100000}, {0x20000000, 0x00020000}

@@ -176,7 +176,7 @@ npm run compile
 JLINK_DEVICE=nRF52840_XXAA node out/mcp/standalone.js
 ```
 
-## Tools (42)
+## Tools (43)
 
 ### Workflow Tools (start here)
 

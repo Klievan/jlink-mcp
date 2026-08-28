@@ -75,6 +75,22 @@ control block by scanning RAM and never reports the address back, so without
 this RTT cannot be recovered after a reset or a flash — and a stream that
 stopped being collected looks exactly like a device that has gone quiet.
 
+## Do not guess a part number
+
+`set_device` needs J-Link's exact name for the chip, and a wrong one fails in
+a way that looks like broken hardware rather than a typo. J-Link knows the
+list — around 9800 parts — so ask it:
+
+```
+search_devices { query: "stm32f407" }
+search_devices { query: "nordic" }        # by manufacturer
+search_devices { query: "cortex-m33" }    # by core
+```
+
+Results carry flash and RAM sizes, which is what separates the variants that
+differ by nothing else — an `STM32F407IE` from an `STM32F407IG`. Pass the name
+back to `set_device` exactly as written.
+
 ## The halt rule
 
 **Reading a running target is impossible, not slow.** The GDB server is a
