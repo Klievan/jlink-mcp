@@ -1,8 +1,8 @@
 # Publish this server to the MCP registry.
 #
 # Runs on a release tag. Authentication is GitHub OIDC against the
-# io.github.Klievan namespace, so there is no token to store or rotate —
-# the workflow's identity is the proof of ownership.
+# io.github.Klievan namespace, so there is no token to store or rotate — the
+# workflow's identity is the proof of ownership.
 name: Publish to MCP registry
 
 on:
@@ -20,17 +20,17 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
-
-      # Fail here rather than at the registry if the manifests have drifted.
-      # A version mismatch between server.json and package.json is rejected on
-      # publish, and the message does not say which file is wrong.
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
       - run: npm ci
       - run: npm test
 
+      # Fail here rather than at the registry if the manifests have drifted.
+      # A version mismatch is rejected on publish with a message that does not
+      # say which file is wrong.
       - name: Check server.json matches the tag
+        if: github.ref_type == 'tag'
         run: |
           tag="${GITHUB_REF_NAME#v}"
           manifest=$(node -p "require('./server.json').version")
@@ -39,7 +39,42 @@ jobs:
             exit 1
           fi
 
+      # The real publisher is a Go binary released from the registry repo.
+      #
+      # NOT the npm package of the same name — that is an unrelated MCP server
+      # which starts on stdio, does nothing, and exits 0. A workflow built on
+      # it went green having published absolutely nothing, which is exactly the
+      # kind of silent success this project keeps having to dig out.
+      - name: Install mcp-publisher
+        run: |
+          set -euo pipefail
+          tag=$(curl -fsSL https://api.github.com/repos/modelcontextprotocol/registry/releases/latest | jq -r .tag_name)
+          echo "registry CLI $tag"
+          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/download/${tag}/mcp-publisher_linux_amd64.tar.gz" \
+            | tar -xz mcp-publisher
+          ./mcp-publisher --version
+
       - name: Publish
         run: |
-          npx --yes mcp-publisher login github-oidc
-          npx --yes mcp-publisher publish
+          set -euo pipefail
+          ./mcp-publisher login github-oidc
+          ./mcp-publisher publish
+
+      # A green publish step is not a listing. Ask the registry.
+      - name: Verify the server is actually listed
+        run: |
+          set -euo pipefail
+          name=$(node -p "require('./server.json').name")
+          want=$(node -p "require('./server.json').version")
+          for i in $(seq 1 10); do
+            got=$(curl -fsSL "https://registry.modelcontextprotocol.io/v0/servers?search=${name}" \
+              | jq -r --arg n "$name" '.servers[] | select(.server.name==$n) | .server.version' | head -1)
+            if [ "$got" = "$want" ]; then
+              echo "listed: $name $got"
+              exit 0
+            fi
+            echo "not listed yet (attempt $i, saw '${got:-nothing}')"
+            sleep 15
+          done
+          echo "::error::$name $want is not in the registry after publishing"
+          exit 1

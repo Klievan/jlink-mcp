@@ -3,7 +3,6 @@
     "jlink": {
       "command": "node",
       "args": ["out/mcp/standalone.js"],
-      "cwd": "/Users/ivanherrera/projects/thesprkfactory/mcpserver",
       "env": {
         "JLINK_DEVICE": "nRF5340_xxAA_APP"
       }

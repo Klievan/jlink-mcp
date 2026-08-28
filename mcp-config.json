@@ -1,9 +1,12 @@
 {
+  "_comment": "Example MCP client config. Uses the published npm package, so it needs no paths. Set JLINK_DEVICE to your target — the search_devices tool finds the exact spelling.",
   "mcpServers": {
     "jlink": {
-      "command": "node",
-      "args": ["out/mcp/standalone.js"],
-      "cwd": "/Users/ivanherrera/projects/thesprkfactory/mcpserver"
+      "command": "npx",
+      "args": ["-y", "jlink-mcp"],
+      "env": {
+        "JLINK_DEVICE": "nRF52840_XXAA"
+      }
     }
   }
 }
