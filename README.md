@@ -558,6 +558,24 @@ npm run test:hil  # hardware tier; needs HIL=1 and a probe
 | `BMP_SERIAL_PORT` | `/dev/ttyACM0` | BMP serial port |
 | `BMP_TARGET_INDEX` | `1` | Target index after scan |
 
+## Installing
+
+```bash
+npx jlink-mcp                     # standalone MCP server
+```
+
+Or as a Claude Code plugin, which brings the `embedded-debugging` skill with
+it:
+
+```
+/plugin marketplace add Klievan/jlink-mcp
+/plugin install jlink-mcp
+```
+
+The VS Code extension is on the
+[Marketplace](https://marketplace.visualstudio.com/items?itemName=Klievan.jlink-mcp)
+and registers the server automatically for any MCP-aware client.
+
 ## Prerequisites
 
 - **[SEGGER J-Link Software](https://www.segger.com/downloads/jlink/)** installed (JLinkExe, JLinkGDBServer)

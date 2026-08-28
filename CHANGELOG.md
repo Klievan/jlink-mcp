@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.0
 
 Aimed at two things reported from real use: models never loaded the ELF, so
 every backtrace was bare addresses, and they reasoned about the hardware
@@ -25,6 +25,23 @@ in the model.
 - **S4**, a hardware suite for debug symbols. The fixture ELF had been
   exported and unused since the harness was written.
 
+### Added
+
+- **`search_devices`.** `set_device` needs J-Link's exact spelling of a part,
+  and the only guidance was two examples — so callers guessed part numbers,
+  and a wrong guess fails in a way that looks like broken hardware. J-Link
+  publishes the answer: `ExpDevList` dumps 9818 devices across 75
+  manufacturers. Searchable by part number, manufacturer or core, with flash
+  and RAM sizes to separate variants that differ by nothing else.
+- **A status bar that says who has the probe.** A J-Link serves one client at
+  a time, and the usual way that bites is an assistant leaving a GDB server
+  running. The extension could not see that — the MCP server is a separate
+  process — so it now watches the GDB port, which is true whoever is
+  responsible, and reads `J-Link · MCP · 47m`. Clicking frees the probe. It
+  will not kill a process it cannot identify as a J-Link GDB server.
+- **`server.json`**, so the server can be listed in the MCP registry, plus a
+  `marketplace.json` making the repo installable as a Claude Code plugin.
+
 ### Fixed
 
 - **Loading symbols no longer requires a halted target.** `file` is answered
@@ -37,6 +54,10 @@ in the model.
 - **`gdb_load` reported "Symbols loaded" for a load that was refused**, with
   nothing after the colon. The caller then stops trying, and every later
   backtrace is anonymous for a reason it has been told is already solved.
+- **A peripheral filter that matched nothing said nothing useful.** It now
+  lists what the part actually has — a chip whose I2C blocks are called TWIM
+  will never answer to "i2c", and the caller had no way to discover that. The
+  filter is also trimmed now; ` i2c ` matched nothing.
 - **Three README badges no longer rendered.** Shields retired the entire
   visual-studio-marketplace family and there is no replacement, so the VS Code
   badge makes no version claim and a release badge carries the version

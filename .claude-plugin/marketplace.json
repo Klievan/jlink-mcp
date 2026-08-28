@@ -1,0 +1,14 @@
+{
+  "name": "jlink-mcp",
+  "owner": {
+    "name": "Klievan",
+    "url": "https://github.com/Klievan"
+  },
+  "plugins": [
+    {
+      "name": "jlink-mcp",
+      "source": "./",
+      "description": "Embedded debugging on real hardware: J-Link, OpenOCD and Black Magic probes, with a skill covering ELF symbols, SVD peripheral decoding, and the halt/read/resume discipline."
+    }
+  ]
+}
