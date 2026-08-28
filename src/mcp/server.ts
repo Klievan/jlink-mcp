@@ -83,7 +83,7 @@ export class JLinkMcpServer {
 
     this.server.tool(
       "list_devices",
-      "Scan for connected debug probes and show what hardware is attached. Use this first if you don't know what device is connected.",
+      "Scan for connected PROBES — the debuggers plugged into this machine, not target chips. Despite the name it does not list target devices; use search_devices for those. Shows probe serial numbers and whether one is reachable.",
       {},
       async () => {
         const result = await probe.listDevices();
@@ -164,6 +164,47 @@ export class JLinkMcpServer {
 
         return { content: [{ type: "text", text:
           (blocked ? "Not ready to debug yet.\n\n" : "Ready to debug.\n\n") + lines.join("\n") }] };
+      }
+    );
+
+    this.server.tool(
+      "set_svd_path",
+      "Point the server at a CMSIS-SVD file for the target at runtime, so peripheral reads come back " +
+      "with named fields and decoded values instead of raw hex. Mirrors set_device — you do not have to " +
+      "restart with SVD_PATH set.",
+      { path: z.string().describe("Path to a .svd or .svd.gz file for this exact part") },
+      async ({ path: svdPath }) => {
+        // Replacing the registry rather than mutating it, so a bad path
+        // cannot half-apply and leave the old file's peripherals answering
+        // for the new one.
+        const candidate = new SvdRegistry(svdPath);
+        const why = candidate.unavailableReason();
+        if (why) {
+          return { content: [{ type: "text", text: `Not loaded: ${why}` }] };
+        }
+        this.svd = candidate;
+        const d = candidate.getDevice();
+        return { content: [{ type: "text", text:
+          `SVD loaded from ${svdPath}: ${d?.name ?? "unknown device"}, ${d?.peripherals.length ?? 0} peripherals. ` +
+          `read_peripheral and decode_register will now name fields.` }] };
+      }
+    );
+
+    this.server.tool(
+      "set_rtt_address",
+      "Tell the server where the firmware's RTT control block is (its _SEGGER_RTT symbol), at runtime. " +
+      "Without it RTT cannot be recovered after a reset or flash, and a stopped stream is " +
+      "indistinguishable from a quiet device. Mirrors set_device.",
+      { address: z.string().describe("Hex address of _SEGGER_RTT, e.g. '0x20002050'") },
+      async ({ address }) => {
+        const addr = parseInt(address, 16);
+        if (!Number.isFinite(addr) || addr <= 0) {
+          return { content: [{ type: "text", text: `Not a usable address: ${JSON.stringify(address)}` }] };
+        }
+        this.probe.setRttControlBlockAddress(addr);
+        return { content: [{ type: "text", text:
+          `RTT control block set to 0x${addr.toString(16)}. Check it with rtt_status — if the ID does not ` +
+          `read "SEGGER RTT" the address is wrong or the firmware has not initialised it yet.` }] };
       }
     );
 
@@ -373,8 +414,15 @@ export class JLinkMcpServer {
         // decoding as "No faults detected" on a board that has plainly
         // crashed. Diagnosing a crash means stopping the CPU; that is not a
         // side effect to avoid, it is the prerequisite.
+        // Halting is necessary — a running target refuses every read below —
+        // but leaving the core stopped without saying so is how a later
+        // rtt_status came to report "nothing pending... Silence here is a
+        // quiet device" about a CPU this tool had stopped. Say it, and say it
+        // at the top where it will be read.
         const halted = await probe.halt();
-        if (!halted.success) {
+        if (halted.success) {
+          sections.push("The target is now HALTED — this tool stopped it to read. Call resume when done.");
+        } else {
           sections.push(`(warning: could not halt the target — readings may be incomplete)`);
         }
 
@@ -414,7 +462,33 @@ export class JLinkMcpServer {
         }
         sections.push(faultData.decoded);
 
-        if (regs) {
+        // Only unwind a frame if one exists.
+        //
+        // The stacked frame is written by the CPU when it takes an exception.
+        // With no exception there is nothing there, and the words at SP are
+        // ordinary locals — so this read uninitialised stack on a healthy
+        // device and announced "Faulting instruction at PC=0x13c8208d", an
+        // address outside a 2 MB flash, three lines after saying "No faults
+        // detected". A fabricated address is worse than no address: it sends
+        // the reader hunting through code that never ran.
+        //
+        // IPSR is the CPU's own answer to "am I in an exception", and the
+        // fault status registers are the answer to "was it a fault". Either
+        // will do; neither means there is no frame to read.
+        const ipsrVal = regs?.["IPSR"] ? parseInt(regs["IPSR"], 16) : 0;
+        const faulted = faultData.result.success &&
+          (faultData.raw.cfsr !== 0 || faultData.raw.hfsr !== 0);
+        const inException = ipsrVal !== 0;
+
+        if (regs && !inException && !faulted) {
+          sections.push(
+            "\n### Exception Stack Frame",
+            "Not read: the CPU is not in an exception (IPSR=0) and no fault bits are set, so no " +
+            "exception frame has been stacked. The words at SP are ordinary locals, and reading " +
+            "them as a frame would invent a faulting address that never existed.");
+        }
+
+        if (regs && (inException || faulted)) {
           const spAddr = regs["PSP"] && regs["PSP"] !== "0x00000000"
             ? parseInt(regs["PSP"], 16)
             : parseInt(regs["MSP"] || "0", 16);
@@ -463,7 +537,7 @@ export class JLinkMcpServer {
     // ═══════════════════════════════════════════════════════════════
 
     this.server.tool("device_info",
-      `Get connected device info via ${probe.displayName}. Returns probe type, target CPU, and compact register summary.`,
+      `Halt the target and read its registers via ${probe.displayName}. Returns the probe name and a compact register summary. Leaves the target HALTED — call resume when you are done.`,
       {},
       async () => {
         const guard = this.requireDevice();
@@ -927,10 +1001,18 @@ export class JLinkMcpServer {
         const result = await this.gdb.backtrace(full ?? false);
         const text = JLinkMcpServer.resultText(result, "(no backtrace available)");
 
-        // Read the frames rather than tracking whether gdb_load was called:
-        // symbols loaded from a stale ELF still leave `??`, and the frames are
-        // what the caller is actually looking at.
-        const unresolved = /\?\?/.test(text);
+        // Judge frame #0, not the whole backtrace.
+        //
+        // A trailing `#4 0x... in ?? ()` is normal and healthy — it is the
+        // unwinder running off the top of the stack past main, and it appears
+        // in perfectly symbolised backtraces. Matching anywhere meant this
+        // hint fired on a five-frame backtrace with names, files and line
+        // numbers throughout, telling someone who had already loaded their ELF
+        // to go and load their ELF.
+        //
+        // If frame #0 has no name, symbols are genuinely missing or wrong.
+        const firstFrame = text.split("\n").find((l) => /^#0\b/.test(l.trim())) ?? text;
+        const unresolved = /\?\?/.test(firstFrame);
         return { content: [{ type: "text", text: text + (unresolved
           ? this.hint("elf", 'No symbols: gdb_load { elfFile: "..." } for names and file:line.', true)
           : "") }] };
@@ -977,13 +1059,29 @@ export class JLinkMcpServer {
       async () => { this.rttClient.disconnect(); probe.rttConnected = false; return { content: [{ type: "text", text: "Disconnected from RTT" }] }; }
     );
 
-    this.server.tool("rtt_read", "Read recent RTT log lines (clean, parsed Zephyr format)",
-      { count: z.number().min(1).max(500).optional().describe("Lines to read (default 50)") },
-      async ({ count }) => {
+    this.server.tool("rtt_read",
+      "Read RTT log lines (clean, parsed Zephyr format). Non-destructive — reading does not consume " +
+      "the buffer. Returns the NEWEST lines by default; pass oldest:true for the start of the log, " +
+      "which is where boot output lives.",
+      {
+        count: z.number().min(1).max(500).optional().describe("How many lines (default 50)"),
+        oldest: z.boolean().optional().describe("Return the OLDEST lines instead of the newest — use this to see boot output"),
+      },
+      async ({ count, oldest }) => {
         if (!this.rttClient.isConnected()) return { content: [{ type: "text", text: "RTT not connected. Use start_debug_session first." }] };
-        const lines = this.rttClient.getLines(count ?? 50);
+
+        // Reads are non-destructive — the buffer keeps everything up to its
+        // cap — but only the newest lines were ever reachable, so a boot
+        // banner scrolled away the moment the device got chatty and there was
+        // no way to ask for it back.
+        const held = this.rttClient.getLines(100000).length;
+        const lines = oldest
+          ? this.rttClient.getLines(100000).slice(0, count ?? 50)
+          : this.rttClient.getLines(count ?? 50);
         return { content: [{ type: "text", text: lines.length > 0
-          ? lines.join("\n")
+          ? lines.join("\n") + (held > lines.length
+              ? `\n\n[${lines.length} of ${held} lines${oldest ? " — oldest first" : " — newest; pass oldest:true for the start"}]`
+              : "")
           : "No RTT output yet." + this.rttEmptyHint() }] };
       }
     );
@@ -997,7 +1095,17 @@ export class JLinkMcpServer {
       },
       async ({ level, module, pattern, count }) => {
         const results = this.rttClient.search({ level, module, pattern, count: count ?? 50 });
-        if (results.length === 0) return { content: [{ type: "text", text: "No matches found" + this.rttEmptyHint() }] };
+        if (results.length === 0) {
+          // "Your filter matched nothing" and "the stream is empty" are
+          // different facts, and this used to answer the second when it meant
+          // the first — telling someone with a full buffer that RTT had
+          // probably stopped after a reset that never happened.
+          const held = this.rttClient.getLines(100000).length;
+          return { content: [{ type: "text", text: held === 0
+            ? "No RTT output at all." + this.rttEmptyHint()
+            : `No matches, but the buffer holds ${held} lines — so RTT is flowing and the filter is ` +
+              `what excluded them. rtt_read shows recent lines unfiltered.` }] };
+        }
         return { content: [{ type: "text", text: `Found ${results.length} matches:\n${results.map(formatLogLine).join("\n")}` }] };
       }
     );
@@ -1023,6 +1131,15 @@ export class JLinkMcpServer {
       async ({ address }) => {
         const g = this.requireDevice(); if (g) return g;
         await this.ensureGdbSession();
+
+        // Pointers on a stopped CPU describe a moment, not a trend.
+        //
+        // This tool exists to separate "quiet device" from "probe not
+        // collecting", and it answered "quiet device" twice about a core that
+        // diagnose_crash had silently halted. Nothing was pending because
+        // nothing was running. Saying so is the difference between a reading
+        // and a conclusion.
+        const running = await this.probe.isTargetRunning?.();
 
         const configured = this.probe.getRttControlBlockAddress();
         const addr = address ? parseInt(address, 16) : configured;
@@ -1078,7 +1195,10 @@ export class JLinkMcpServer {
         {
           const pending = wr >= rd ? wr - rd : size - rd + wr;
           lines.push(pending === 0
-            ? `  => nothing pending: the probe has collected everything written. Silence here is a quiet device.`
+            ? (running === false
+                ? `  => nothing pending — but the CPU is HALTED, so it is not writing either. This says ` +
+                  `nothing about whether RTT is being collected. Resume and look again.`
+                : `  => nothing pending: the probe has collected everything written. Silence here is a quiet device.`)
             : `  => ${pending} bytes written and not collected. If this does not fall on a second look, the ` +
               `probe has stopped draining — which is what a reset or flash does to RTT. Restart collection ` +
               `by reconnecting RTT (JLINK_RTT_ADDR must be set for that to work).`);

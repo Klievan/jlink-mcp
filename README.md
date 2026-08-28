@@ -163,7 +163,7 @@ note  SVD — not loaded, so peripheral reads stay raw hex. Set SVD_PATH to a CM
 You do not need your device's exact part number up front. `search_devices`
 searches all 9800 that J-Link supports, by part number, manufacturer, or core.
 
-## Tools (45)
+## Tools (47)
 
 ### Workflow Tools (start here)
 
