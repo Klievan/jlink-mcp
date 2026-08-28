@@ -5,6 +5,7 @@ import { log, logError, logRaw } from "../utils/logger";
 import * as path from "path";
 import * as fs from "fs";
 import * as os from "os";
+import * as crypto from "crypto";
 
 /** One entry from J-Link's internal device list. */
 export interface SupportedDevice {
@@ -130,13 +131,24 @@ export class JLinkBackend extends ProbeBackend {
    *    (e.g. STM32L0 at 4 MHz SWD, MCU running from MSI). We classify
    *    real failures below by parsing stdout instead.
    */
-  private async execRaw(commands: string[], speedOverride?: number): Promise<CommandResult> {
+  private async execRaw(
+    commands: string[],
+    speedOverride?: number,
+    opts: { autoconnect?: boolean } = {}
+  ): Promise<CommandResult> {
     const speed = speedOverride ?? this.config.speed;
     const args = [
       "-device", this.config.device,
       "-if", this.config.interface,
       "-speed", String(speed),
-      "-autoconnect", "1",
+      // Autoconnect is right for anything that touches the target and wrong
+      // for anything that does not. Exporting the DLL's internal device list
+      // needs no target at all, but inherited this flag — so on a board whose
+      // debug port was unreachable, search_devices took 23 seconds to answer
+      // a question about a static list. Long enough that a caller may decide
+      // the tool is broken and go back to guessing part numbers, which is the
+      // behaviour it exists to replace.
+      ...(opts.autoconnect === false ? [] : ["-autoconnect", "1"]),
       "-NoGui", "1",
     ];
     if (this.config.serialNumber) {
@@ -906,18 +918,73 @@ export class JLinkBackend extends ProbeBackend {
   async listSupportedDevices(): Promise<SupportedDevice[]> {
     if (this.deviceCatalog) return this.deviceCatalog;
 
+    // Measured at 23 seconds on a laptop: JLinkExe connects to the probe
+    // before it will export anything, and then writes 14,000-odd devices.
+    // That is long enough that a caller may reasonably decide the tool is
+    // broken and go back to guessing part numbers — which is the exact
+    // behaviour this tool exists to replace.
+    //
+    // The list is compiled into the DLL, so it is fixed for an installation.
+    // Cache it on disk, keyed by the JLinkExe binary's path, size and mtime,
+    // so a J-Link upgrade invalidates it and nothing else does.
+    const cached = this.readCachedCatalog();
+    if (cached) {
+      this.deviceCatalog = cached;
+      return cached;
+    }
+
     // mktemp, never a fixed path: parallel runs on a shared machine otherwise
     // overwrite each other's output and read back somebody else's list.
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jlink-devlist-"));
     const file = path.join(dir, "devices.txt");
     try {
-      await this.acquireLock(() => this.execRaw([`ExpDevList ${file}`]));
+      await this.acquireLock(() => this.execRaw([`ExpDevList ${file}`], undefined, { autoconnect: false }));
       if (!fs.existsSync(file)) return [];
       this.deviceCatalog = JLinkBackend.parseDeviceList(fs.readFileSync(file, "utf8"));
+      this.writeCachedCatalog(this.deviceCatalog);
       return this.deviceCatalog;
     } finally {
       try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ }
     }
+  }
+
+  /** Identity of the J-Link install, so an upgrade invalidates the cache. */
+  private catalogCachePath(): string | null {
+    try {
+      const exe = this.jlinkExe;
+      const resolved = path.isAbsolute(exe) ? exe : "";
+      const st = resolved ? fs.statSync(resolved) : null;
+      const key = `${resolved}:${st?.size ?? 0}:${st?.mtimeMs ?? 0}`;
+      const hash = crypto.createHash("sha256").update(key).digest("hex").slice(0, 16);
+      return path.join(os.tmpdir(), `jlink-mcp-devices-${hash}.json`);
+    } catch {
+      return null;
+    }
+  }
+
+  private readCachedCatalog(): SupportedDevice[] | null {
+    const p = this.catalogCachePath();
+    if (!p) return null;
+    try {
+      const parsed = JSON.parse(fs.readFileSync(p, "utf8"));
+      // A truncated or empty cache is worse than none — it would answer
+      // "no such device" for parts the probe supports.
+      return Array.isArray(parsed) && parsed.length > 0 ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private writeCachedCatalog(devices: SupportedDevice[]): void {
+    const p = this.catalogCachePath();
+    if (!p || devices.length === 0) return;
+    try {
+      // Write then rename, so a crash mid-write cannot leave a half file that
+      // reads back as a short device list.
+      const tmp = `${p}.${process.pid}`;
+      fs.writeFileSync(tmp, JSON.stringify(devices));
+      fs.renameSync(tmp, p);
+    } catch { /* a cache that cannot be written is not an error */ }
   }
 
   /**
