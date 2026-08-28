@@ -123,3 +123,35 @@ describe("the README does not lie about the tool count", () => {
     assert.ok(at < 200, `Installing is at line ${at + 1}; too far down to find`);
   });
 });
+
+describe("the server reports its own version honestly", () => {
+  // It said 0.3.2 while the package was 0.6.0 — three releases stale. Every
+  // client that connected, every registry that scraped us and every bug
+  // report anyone filed carried the wrong number, and nothing could notice,
+  // because a literal is always internally consistent with itself.
+  test("matches package.json", () => {
+    const { packageVersion } = require("../../src/utils/version");
+    assert.equal(packageVersion(), pkg.version);
+  });
+
+  test("no version literal is left in the source", () => {
+    // The fix is worth nothing if the next one is typed in by hand.
+    const offenders: string[] = [];
+    const walk = (dir: string) => {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const p = path.join(dir, e.name);
+        if (e.isDirectory()) { walk(p); continue; }
+        if (!e.name.endsWith(".ts")) continue;
+        const body = fs.readFileSync(p, "utf8")
+          .replace(/\/\*[\s\S]*?\*\//g, "")   // block comments
+          .replace(/\/\/[^\n]*/g, "");         // line comments
+        for (const m of body.matchAll(/version:\s*["'](\d+\.\d+\.\d+)["']/g)) {
+          offenders.push(`${path.relative(root, p)} -> ${m[1]}`);
+        }
+      }
+    };
+    walk(path.join(root, "src"));
+    assert.deepEqual(offenders, [],
+      `hardcoded version(s): ${offenders.join(", ")} — derive from package.json instead`);
+  });
+});

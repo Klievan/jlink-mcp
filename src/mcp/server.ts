@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { ProbeBackend, parseLittleEndian32 } from "../probe/backend";
+import { packageVersion } from "../utils/version";
 import { createProbeBackend, ProbeFactoryConfig } from "../probe/factory";
 import { GDBClient } from "../gdb/gdb-client";
 import { RTTClient, ParsedLogLine } from "../rtt/rtt-client";
@@ -42,7 +43,7 @@ export class JLinkMcpServer {
 
     this.server = new McpServer({
       name: "jlink-mcp",
-      version: "0.3.2",
+      version: packageVersion(),
     });
 
     this.registerTools();
