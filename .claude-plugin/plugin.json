@@ -1,0 +1,8 @@
+{
+  "name": "jlink-mcp",
+  "description": "Embedded debugging on real hardware through SEGGER J-Link, OpenOCD, and Black Magic probes. Skills for crash diagnosis, hangs, peripheral inspection, and RTT — including loading ELF symbols for source-level backtraces and SVD files for named peripheral fields.",
+  "version": "0.5.1",
+  "author": { "name": "Klievan" },
+  "keywords": ["embedded", "firmware", "debugging", "jlink", "segger", "gdb", "rtt", "cortex-m", "arm", "svd"],
+  "skills": ["./skills/embedded-debugging"]
+}
