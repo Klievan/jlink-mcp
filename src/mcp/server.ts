@@ -745,6 +745,17 @@ export class JLinkMcpServer {
       },
       async ({ elfFile, flash }) => {
         const loadSymbols = await this.gdb.loadSymbols(elfFile);
+
+        // Announcing "Symbols loaded" for a load that did not happen is the
+        // worst possible answer here: the caller stops trying, and every
+        // later backtrace comes back anonymous for a reason it has been told
+        // is already solved. Seen on hardware, reported as `Symbols loaded: `
+        // with nothing after the colon.
+        if (!loadSymbols.success) {
+          return { content: [{ type: "text", text:
+            `Symbols NOT loaded: ${JLinkMcpServer.resultText(loadSymbols, "no reason reported")}` }] };
+        }
+
         if (!flash) {
           return { content: [{ type: "text", text: `Symbols loaded: ${loadSymbols.output}\n\nBacktraces and variable inspection will now show source file:line info. Use flash=true to also program the target.` }] };
         }

@@ -69,6 +69,32 @@ export class GDBClient {
    * "Starting target CPU...".
    */
   private targetRunning = false;
+
+  /**
+   * Commands GDB answers from its own symbol table, without touching the
+   * target.
+   *
+   * The running-target guard exists because a synchronous remote stops reading
+   * stdin while the target executes — but that is a fact about the *remote*,
+   * and these never reach it. Loading an ELF and resolving an address to a
+   * source line are host-side operations on debug info that is already in
+   * memory.
+   *
+   * Refusing them was a real cost, not a theoretical one: `gdb_load` was
+   * turned away purely because the target happened to be running, which is
+   * the normal state of a device you have not halted yet. Loading symbols is
+   * the first thing anyone should do in a session and the last thing that
+   * should require ceremony.
+   *
+   *   [GDB] > (refused, target running) file /.../rtt-fixture.elf
+   *
+   * Deliberately a narrow allow-list. `print` and `x` look host-side and are
+   * not — they read target memory — so they stay behind the guard.
+   */
+  private static isHostSide(cmd: string): boolean {
+    return /^\s*(file|symbol-file|add-symbol-file|directory|list|info\s+(line|source|sources|functions|variables|scope|address|symbol|sharedlibrary))\b/i
+      .test(cmd);
+  }
   private stopEvent: string | null = null;
   private history: string[] = [];
   private maxHistory = 200;
@@ -235,7 +261,7 @@ export class GDBClient {
     // target stops, so waiting on it buys nothing but a timeout — and a
     // timeout returns empty output, which reads like a healthy quiet target
     // rather than "you need to halt first".
-    if (this.targetRunning) {
+    if (this.targetRunning && !GDBClient.isHostSide(cmd)) {
       // Log the refusal. A command that never reaches GDB is also never
       // logged by sendCommand, so a whole refused sequence leaves no trace at
       // all — which cost a hardware round: a reset path appeared not to run

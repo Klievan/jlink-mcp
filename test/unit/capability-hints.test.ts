@@ -64,3 +64,46 @@ describe("capability hints", () => {
     assert.ok(hintOf(s, "x", "short").length < 200);
   });
 });
+
+describe("host-side GDB commands", () => {
+  // The running-target guard exists because a synchronous remote stops reading
+  // stdin while the target executes. That is a fact about the remote, and
+  // these commands never reach it — GDB answers them from a symbol table it
+  // already holds.
+  //
+  // Refusing them cost a real hardware round. gdb_load was turned away purely
+  // because the target happened to be running, which is the normal state of a
+  // device nobody has halted yet:
+  //
+  //   [GDB] > (refused, target running) file /.../rtt-fixture.elf
+  //
+  // and the tool still answered "Symbols loaded: ".
+  const isHostSide = (cmd: string): boolean =>
+    (require("../../src/gdb/gdb-client").GDBClient as any).isHostSide(cmd);
+
+  for (const cmd of [
+    "file /tmp/app.elf",
+    "symbol-file /tmp/app.elf",
+    "add-symbol-file /tmp/app.elf 0x8000",
+    "info line *0x2a4",
+    "info functions",
+    "list main",
+  ]) {
+    test(`allows "${cmd}" while the target runs`, () => {
+      assert.equal(isHostSide(cmd), true);
+    });
+  }
+
+  for (const cmd of [
+    "print myGlobal",     // reads target memory
+    "x/16xw 0x20000000",  // reads target memory
+    "continue",
+    "bt",                 // needs the target's stack
+    "info registers",     // needs the target's registers
+    "monitor reset",
+  ]) {
+    test(`still refuses "${cmd}" while the target runs`, () => {
+      assert.equal(isHostSide(cmd), false, "this one genuinely needs the target");
+    });
+  }
+});
