@@ -4,6 +4,17 @@ import { ProcessManager } from "../utils/process-manager";
 import { log, logError, logRaw } from "../utils/logger";
 import * as path from "path";
 import * as fs from "fs";
+import * as os from "os";
+
+/** One entry from J-Link's internal device list. */
+export interface SupportedDevice {
+  manufacturer: string;
+  name: string;
+  core: string;
+  /** Total flash across all areas, in bytes. */
+  flashSize: number;
+  ramSize: number;
+}
 
 export interface JLinkConfig {
   installDir: string;
@@ -75,6 +86,9 @@ export class JLinkBackend extends ProbeBackend {
 
   private config: JLinkConfig;
   private processManager: ProcessManager;
+  /** ExpDevList output, parsed once — the list is compiled into the DLL. */
+  private deviceCatalog: SupportedDevice[] | null = null;
+
   private gdbOutputBuffer: string[] = [];
 
   constructor(config: Partial<JLinkConfig>, processManager: ProcessManager) {
@@ -823,6 +837,71 @@ export class JLinkBackend extends ProbeBackend {
   getRTTPort(): number { return this.config.rttTelnetPort; }
 
   getRttControlBlockAddress(): number | undefined { return this.config.rttControlBlockAddress; }
+
+  /**
+   * Every device name this J-Link installation accepts.
+   *
+   * `set_device` takes an exact string and the tool description offers two
+   * examples, which leaves a caller guessing at part numbers for any chip that
+   * is not one of them — and a wrong guess fails in a way that looks like
+   * broken hardware. J-Link knows the answer: ExpDevList dumps the DLL's
+   * internal list, 9800-odd parts across 75 manufacturers.
+   *
+   * The list is compiled into the DLL, so it is fixed for an installation and
+   * fetched once. It also does not need the probe — measured with none
+   * attached, the connect failed and the file was still written — but the
+   * spawn is serialised anyway, because a J-Link serves one client at a time
+   * and evicting a live GDB server to read a static list would be a poor
+   * trade.
+   */
+  async listSupportedDevices(): Promise<SupportedDevice[]> {
+    if (this.deviceCatalog) return this.deviceCatalog;
+
+    // mktemp, never a fixed path: parallel runs on a shared machine otherwise
+    // overwrite each other's output and read back somebody else's list.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jlink-devlist-"));
+    const file = path.join(dir, "devices.txt");
+    try {
+      await this.acquireLock(() => this.execRaw([`ExpDevList ${file}`]));
+      if (!fs.existsSync(file)) return [];
+      this.deviceCatalog = JLinkBackend.parseDeviceList(fs.readFileSync(file, "utf8"));
+      return this.deviceCatalog;
+    } finally {
+      try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ }
+    }
+  }
+
+  /**
+   * Parse one ExpDevList line.
+   *
+   *   "ST", "STM32F407IE", "Cortex-M4", {0x08000000, 0x00080000}, {0x20000000, 0x00020000}
+   *   "Nordic Semi", "nRF52840_xxAA", "Cortex-M4", { {0x0, 0x100000}, {0x10001000, 0x1000} }, {0x20000000, 0x00040000}
+   *
+   * Half the entries carry several flash areas and nest an extra brace level,
+   * so rather than match the punctuation, take the address/size numbers in
+   * order: the last pair is RAM and everything before it is flash. That holds
+   * for both shapes above, and for anything else with the same trailing RAM
+   * convention.
+   */
+  static parseDeviceList(text: string): SupportedDevice[] {
+    const out: SupportedDevice[] = [];
+    // Split on CRLF as well as LF. J-Link writes Windows line endings on every
+    // platform, and JavaScript's `.` does not match \r — it counts as a line
+    // terminator — so `(.*)$` failed on every single line and the parse
+    // returned nothing at all. Silently: an empty device list is exactly what
+    // a J-Link with no list would produce.
+    for (const line of text.split(/\r?\n/)) {
+      const m = line.match(/^"([^"]*)",\s*"([^"]*)",\s*"([^"]*)",\s*(.*)$/);
+      if (!m) continue; // header, blank lines
+      const nums = (m[4].match(/0x[0-9a-fA-F]+/g) ?? []).map((h) => parseInt(h, 16));
+      if (nums.length < 2) continue;
+      const ramSize = nums[nums.length - 1];
+      let flashSize = 0;
+      for (let i = 1; i < nums.length - 2; i += 2) flashSize += nums[i];
+      out.push({ manufacturer: m[1], name: m[2], core: m[3], flashSize, ramSize });
+    }
+    return out;
+  }
 
   /**
    * Re-point the probe at the RTT control block after a target reset.

@@ -92,8 +92,58 @@ export class JLinkMcpServer {
     );
 
     this.server.tool(
+      "search_devices",
+      "Search the device names this J-Link installation accepts, by part number, manufacturer, or core. " +
+      "Use this before set_device instead of guessing a part number — the name must match exactly, and a " +
+      "wrong one fails in a way that looks like broken hardware.",
+      {
+        query: z.string().describe("Substring of a part number, manufacturer, or core. E.g. 'stm32f407', 'nrf528', 'nordic', 'cortex-m33'"),
+        limit: z.number().min(1).max(100).optional().describe("Maximum results (default 40)"),
+      },
+      async ({ query, limit }) => {
+        const probeAny = this.probe as unknown as { listSupportedDevices?: () => Promise<Array<{ manufacturer: string; name: string; core: string; flashSize: number; ramSize: number }>> };
+        if (!probeAny.listSupportedDevices) {
+          return { content: [{ type: "text", text: `${this.probe.displayName} does not publish a device list.` }] };
+        }
+
+        const all = await probeAny.listSupportedDevices();
+        if (all.length === 0) {
+          return { content: [{ type: "text", text: "Could not read the device list from the J-Link DLL." }] };
+        }
+
+        const q = query.trim().toLowerCase();
+        const hits = all.filter((d) =>
+          d.name.toLowerCase().includes(q) ||
+          d.manufacturer.toLowerCase().includes(q) ||
+          d.core.toLowerCase().includes(q));
+
+        if (hits.length === 0) {
+          const makers = [...new Set(all.map((d) => d.manufacturer))].sort();
+          return { content: [{ type: "text", text:
+            `No device matches ${JSON.stringify(query)} among ${all.length} supported devices.\n\n` +
+            `Manufacturers: ${makers.join(", ")}` }] };
+        }
+
+        // Sizes disambiguate the variants that differ only in flash — an
+        // STM32F407IE from an IG — which is exactly the choice a caller
+        // working from a board silkscreen has to make.
+        const kb = (n: number) => (n >= 1024 ? `${Math.round(n / 1024)}K` : `${n}B`);
+        const max = limit ?? 40;
+        const shown = hits.slice(0, max).map((d) =>
+          `${d.name}  (${d.manufacturer}, ${d.core}, flash ${kb(d.flashSize)}, ram ${kb(d.ramSize)})`);
+
+        return { content: [{ type: "text", text:
+          `${hits.length} match${hits.length === 1 ? "" : "es"}` +
+          (hits.length > max ? `, first ${max}` : "") + `:\n` + shown.join("\n") +
+          `\n\nPass one of these to set_device exactly as written.` }] };
+      }
+    );
+
+    this.server.tool(
       "set_device",
-      "Set the target device name at runtime. Required before any debugging commands will work. Examples: 'nRF52840_XXAA', 'nRF5340_xxAA_APP', 'STM32F407VG', 'STM32L476RG'.",
+      "Set the target device name at runtime. Required before any debugging commands will work. " +
+      "The name must match J-Link's exactly — use search_devices to find it rather than guessing a part " +
+      "number. Examples: 'nRF52840_XXAA', 'nRF5340_xxAA_APP', 'STM32F407VG', 'STM32L476RG'.",
       {
         device: z.string().describe("Target device name (e.g., 'nRF52840_XXAA', 'STM32F407VG')"),
       },
@@ -508,7 +558,15 @@ export class JLinkMcpServer {
           "Set SVD_PATH (or jlinkMcp.svdPath) to a CMSIS-SVD file for this part to get named fields and decoded values.") }] };
         const list = this.svd.listPeripherals(filter);
         if (list.length === 0) {
-          return { content: [{ type: "text", text: `No peripherals match ${JSON.stringify(filter)}.` }] };
+          // Say what is there. A bare "no match" leaves the caller guessing at
+          // the vocabulary of a part it has never seen, and the guess it makes
+          // is usually the datasheet's name rather than the SVD's — a chip
+          // whose I2C blocks are called TWIM will never answer to "i2c".
+          const all = this.svd.listPeripherals().map((p) => p.name);
+          const shown = all.slice(0, 60).join(", ");
+          return { content: [{ type: "text", text:
+            `No peripherals match ${JSON.stringify(filter)}.\n\n` +
+            `This part has ${all.length}: ${shown}${all.length > 60 ? ", ..." : ""}` }] };
         }
         const dev = this.svd.getDevice();
         const lines = list.map((p) =>

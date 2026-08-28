@@ -154,6 +154,33 @@ describe("SvdRegistry", () => {
     assert.ok(s.some((n) => n.includes("DEVICEID")));
   });
 
+  test("filters case-insensitively, whatever case the caller used", () => {
+    // Reported from real use: a filter of "i2c" against a part whose
+    // peripherals are I2C1 and I2C2 appeared to return nothing. The filter has
+    // never been case-sensitive — verified against both published tags — so
+    // this pins it rather than leaving the question open.
+    const r = new SvdRegistry(SVD);
+    const names = (f: string) => r.listPeripherals(f).map((p) => p.name);
+    assert.deepEqual(names("twi"), names("TWI"), "case must not change the result");
+    assert.deepEqual(names("TwI"), names("TWI"));
+    assert.ok(names("twi").length > 0, "the fixture has TWI peripherals to find");
+  });
+
+  test("tolerates a filter with whitespace around it", () => {
+    // A filter comes from a model, not a keyboard. Untrimmed, " twi " matched
+    // nothing — and no-match reads exactly like "this part has no such thing".
+    const r = new SvdRegistry(SVD);
+    assert.deepEqual(
+      r.listPeripherals("  twi  ").map((p) => p.name),
+      r.listPeripherals("twi").map((p) => p.name),
+    );
+  });
+
+  test("an all-whitespace filter is no filter, not an impossible one", () => {
+    const r = new SvdRegistry(SVD);
+    assert.equal(r.listPeripherals("   ").length, r.listPeripherals().length);
+  });
+
   test("filters peripherals by substring", () => {
     const r = new SvdRegistry(SVD);
     const uarts = r.listPeripherals("uart");
