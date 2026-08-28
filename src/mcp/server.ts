@@ -121,15 +121,19 @@ export class JLinkMcpServer {
           const scan = await probe.listDevices();
 
           // Require the success line rather than hunting for failure strings.
-          // The first draft did the latter and reported "connected" on a
-          // machine with no probe at all, because "FAILED: Failed to open DLL"
-          // matched none of the phrases it knew — the same enumerate-the-
-          // failures mistake this codebase has made before. A probe that is
-          // there says so:
+          // But allow for what J-Link actually puts between the two halves,
+          // which is not always nothing:
           //
-          //   with a probe   : Connecting to J-Link ...O.K.
-          //   without        : Connecting to J-Link via USB...FAILED: ...
-          const found = /connecting to j-link[\s.]*O\.K\./i.test(scan.rawOutput || scan.output);
+          //   Connecting to J-Link ...O.K.              (hardware runner)
+          //   Connecting to J-Link via USB...O.K.       (laptop, same probe)
+          //
+          // The first version of this check matched only the first form —
+          // built from the one sample I had — and so reported "probe: none
+          // detected" on a working probe that the very next call read a full
+          // register set from. Swapping failure-matching for success-matching
+          // was right; deriving the success pattern from a single machine was
+          // the same error wearing a different hat.
+          const found = /connecting to j-link\b[^\n]*?O\.K\./i.test(scan.rawOutput || scan.output);
           const why = (scan.rawOutput || scan.output).split("\n")
             .find((l) => /fail|error|cannot/i.test(l))?.trim();
           lines.push(found
