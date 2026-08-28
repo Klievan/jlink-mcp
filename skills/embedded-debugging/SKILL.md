@@ -41,8 +41,10 @@ is not a question you can even ask until the ELF is loaded.
 gdb_load { elfFile: "build/zephyr/zephyr.elf" }     # symbols only, does not touch flash
 ```
 
-This does **not** reprogram the device — it loads symbols into GDB. Pass
-`flash: true` only when you actually intend to program it. Load the ELF that
+This does **not** reprogram the device — it loads symbols into GDB, and it
+works whether or not the target is running, because GDB answers it from its
+own symbol table without touching the probe. Pass `flash: true` only when you
+actually intend to program it. Load the ELF that
 matches the firmware currently on the target; a stale ELF gives confidently
 wrong function names, which is worse than `??`.
 

@@ -58,6 +58,21 @@ describe("S4 — debug symbols and backtraces", { skip }, () => {
       `an unresolved backtrace should name the fix:\n${bt}`);
   });
 
+  test("the ELF loads while the target is running", async () => {
+    // Loading symbols is a host-side operation on GDB's own symbol table; it
+    // never reaches the probe. It was refused anyway, purely because the
+    // target was running — which is the normal state of a device nobody has
+    // halted, and the exact moment anyone would load an ELF:
+    //
+    //   [GDB] > (refused, target running) file /.../rtt-fixture.elf
+    //
+    // and the tool answered "Symbols loaded: " regardless. So this one
+    // deliberately does not halt first.
+    await hil.expectOk("resume");
+    const load = await hil.expectOk("gdb_load", { elfFile: RTT_FIXTURE_ELF });
+    assert.ok(!/NOT loaded/i.test(load), `symbols refused on a running target:\n${load}`);
+  });
+
   test("loading the ELF names the frames", async () => {
     const load = await hil.expectOk("gdb_load", { elfFile: RTT_FIXTURE_ELF });
     record("hil-gdb-load-symbols.txt", load);
@@ -97,6 +112,9 @@ describe("S4 — debug symbols and backtraces", { skip }, () => {
   test("an address resolves to a source location", async () => {
     // The other half of what symbols buy: turning a faulting PC into a line
     // of code, which is the move the crash workflow leans on.
+    // Also host-side, and also refused before: resolving an address against
+    // debug info does not touch the target.
+    await hil.expectOk("resume");
     const out = await hil.expectOk("gdb_command", {
       command: `info line *0x${sym("main").toString(16)}`,
     });
