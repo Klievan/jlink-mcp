@@ -5,6 +5,7 @@ import { RTTClient } from "./rtt/rtt-client";
 import { TelnetProxy } from "./telnet/telnet-proxy";
 import { ProcessManager } from "./utils/process-manager";
 import { initLogger, log, logError } from "./utils/logger";
+import { isPortListening, findGdbServerHolders } from "./utils/gdb-server-probe";
 import { getConfig } from "./utils/config";
 
 let mcpServer: JLinkMcpServer | undefined;
@@ -15,6 +16,8 @@ let telnetProxy: TelnetProxy | undefined;
 let outputChannel: vscode.OutputChannel | undefined;
 let rttOutputChannel: vscode.OutputChannel | undefined;
 let statusBarItem: vscode.StatusBarItem | undefined;
+let gdbWatch: NodeJS.Timeout | undefined;
+let lastGdbRunning: boolean | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
   // Output channels
@@ -161,6 +164,11 @@ export function activate(context: vscode.ExtensionContext) {
   statusBarItem.command = "jlinkMcp.showStatus";
   statusBarItem.show();
   context.subscriptions.push(statusBarItem);
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("jlinkMcp.freeProbe", () => offerToFreeProbe())
+  );
+  startGdbServerWatch(context);
 
   // ── Register Commands ────────────────────────────────────────────
 
@@ -317,14 +325,96 @@ export function activate(context: vscode.ExtensionContext) {
   outputChannel.show(true);
 }
 
+/**
+ * Poll the GDB port and show what is actually true.
+ *
+ * updateStatusBar used to be called only from this extension's own start/stop
+ * commands, so it reported what *we* had done. An LLM driving the MCP server
+ * starts the GDB server in the separate process VSCode spawns for MCP, which
+ * the extension host never sees — so the bar read "disconnected" while the
+ * probe was held, and the next thing to want the probe failed for reasons
+ * nothing on screen explained.
+ *
+ * A listening port is observable regardless of who is responsible, so poll
+ * that instead of trusting our own memory.
+ */
+function startGdbServerWatch(context: vscode.ExtensionContext) {
+  const port = () => vscode.workspace.getConfiguration("jlinkMcp").get<number>("jlink.gdbPort") ?? 2331;
+
+  const tick = async () => {
+    const running = await isPortListening(port());
+    if (running === lastGdbRunning) return;   // only redraw on change
+    lastGdbRunning = running;
+    updateStatusBar(running);
+  };
+
+  void tick();
+  gdbWatch = setInterval(() => void tick(), 3000);
+  context.subscriptions.push({ dispose: () => { if (gdbWatch) clearInterval(gdbWatch); } });
+}
+
+/**
+ * Offer to free the probe.
+ *
+ * Stops our own server when we own it. Otherwise finds who holds the port —
+ * and refuses to kill anything that is not a J-Link GDB server, because a
+ * listening port proves something is there, not that it is ours.
+ */
+async function offerToFreeProbe() {
+  const port = vscode.workspace.getConfiguration("jlinkMcp").get<number>("jlink.gdbPort") ?? 2331;
+
+  if (gdbServer?.isRunning?.()) {
+    const r = gdbServer.stop();
+    vscode.window.showInformationMessage(r.message);
+    lastGdbRunning = undefined;
+    return;
+  }
+
+  const holders = await findGdbServerHolders(port);
+  const ours = holders.filter((h) => h.isGdbServer);
+
+  if (holders.length === 0) {
+    vscode.window.showInformationMessage(`Nothing is listening on GDB port ${port}.`);
+    return;
+  }
+  if (ours.length === 0) {
+    // Say who it is and stop. Being in the way is not grounds for a kill.
+    vscode.window.showWarningMessage(
+      `Port ${port} is held by something that is not a J-Link GDB server ` +
+      `(pid ${holders[0].pid}: ${holders[0].commandLine.slice(0, 80)}). Leaving it alone.`);
+    return;
+  }
+
+  const pick = await vscode.window.showWarningMessage(
+    `A J-Link GDB server (pid ${ours.map((h) => h.pid).join(", ")}) is holding the probe. ` +
+    `Stop it so other tools can use the probe?`,
+    { modal: true }, "Stop it");
+  if (pick !== "Stop it") return;
+
+  for (const h of ours) {
+    try { process.kill(h.pid, "SIGTERM"); } catch (e: any) {
+      vscode.window.showErrorMessage(`Could not stop pid ${h.pid}: ${e?.message ?? e}`);
+    }
+  }
+  lastGdbRunning = undefined;
+  vscode.window.showInformationMessage("Stopped the GDB server; the probe is free.");
+}
+
 function updateStatusBar(gdbRunning: boolean) {
   if (!statusBarItem) return;
   if (gdbRunning) {
-    statusBarItem.text = "$(debug) J-Link Connected";
-    statusBarItem.backgroundColor = undefined;
+    // Deliberately loud. The failure this addresses is someone forgetting a
+    // session is live and then losing an hour to a probe that will not
+    // attach, so a quiet colour change would not have helped them.
+    statusBarItem.text = "$(debug) J-Link: GDB server running";
+    statusBarItem.tooltip = "A GDB server is holding the probe. Click to stop it and free the probe for other tools.";
+    statusBarItem.backgroundColor = new vscode.ThemeColor("statusBarItem.warningBackground");
+    statusBarItem.command = "jlinkMcp.freeProbe";
   } else {
     statusBarItem.text = "$(debug-disconnect) J-Link";
+    statusBarItem.tooltip = "J-Link MCP — no GDB server running. Click for status.";
     statusBarItem.backgroundColor = undefined;
+    statusBarItem.command = "jlinkMcp.showStatus";
   }
 }
 
