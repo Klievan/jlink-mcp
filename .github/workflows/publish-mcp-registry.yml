@@ -54,6 +54,25 @@ jobs:
             | tar -xz mcp-publisher
           ./mcp-publisher --version
 
+      # The registry checks that the npm package actually exists at this
+      # version before it will list it, and rejects the publish otherwise:
+      #
+      #   NPM package 'jlink-mcp' exists, but version '0.6.0' was not found
+      #
+      # That is the right behaviour — a registry entry pointing at a version
+      # nobody can install is worse than no entry. Check it here so the run
+      # fails in two seconds naming the cause, rather than after login.
+      - name: Check the npm version is published
+        run: |
+          set -euo pipefail
+          name=$(node -p "require('./package.json').name")
+          want=$(node -p "require('./package.json').version")
+          if ! npm view "${name}@${want}" version >/dev/null 2>&1; then
+            echo "::error::${name}@${want} is not on npm yet. Publish it first — the registry will not list a version nobody can install."
+            exit 1
+          fi
+          echo "${name}@${want} is on npm"
+
       - name: Publish
         run: |
           set -euo pipefail
