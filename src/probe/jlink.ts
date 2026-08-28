@@ -822,6 +822,8 @@ export class JLinkBackend extends ProbeBackend {
   supportsRTT(): boolean { return true; }
   getRTTPort(): number { return this.config.rttTelnetPort; }
 
+  getRttControlBlockAddress(): number | undefined { return this.config.rttControlBlockAddress; }
+
   /**
    * Re-point the probe at the RTT control block after a target reset.
    *

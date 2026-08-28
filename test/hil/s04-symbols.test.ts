@@ -48,6 +48,16 @@ describe("S4 — debug symbols and backtraces", { skip }, () => {
       `a backtrace with no ELF loaded should not know the name "main":\n${bt}`);
   });
 
+  test("an unresolved backtrace says how to fix itself", async () => {
+    // The reported failure this exists for: a model gets bare addresses and
+    // has no idea gdb_load is available. Asserted here rather than trusted,
+    // because a hint that does not appear is worth nothing and nothing in the
+    // unit tier can tell whether real frames come back unresolved.
+    const bt = await withTargetHalted(hil, () => hil.expectOk("gdb_backtrace"));
+    assert.match(bt, /gdb_load/,
+      `an unresolved backtrace should name the fix:\n${bt}`);
+  });
+
   test("loading the ELF names the frames", async () => {
     const load = await hil.expectOk("gdb_load", { elfFile: RTT_FIXTURE_ELF });
     record("hil-gdb-load-symbols.txt", load);
@@ -59,6 +69,11 @@ describe("S4 — debug symbols and backtraces", { skip }, () => {
     // the one name that must appear whatever the sampling moment.
     assert.match(bt, /\bmain\b/,
       `symbols were loaded but the backtrace still has no names:\n${bt}`);
+
+    // And it stops nagging once it has been acted on. A hint that keeps
+    // firing after the problem is fixed is just noise on every later answer.
+    assert.ok(!/gdb_load/.test(bt),
+      `frames resolved, so the hint should be gone:\n${bt}`);
   });
 
   test("a symbols-only load does not reprogram the target", async () => {

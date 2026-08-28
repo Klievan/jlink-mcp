@@ -120,9 +120,14 @@ describe("SVD decoding", () => {
 });
 
 describe("SvdRegistry", () => {
-  test("says what to do when no SVD is configured", () => {
-    const why = new SvdRegistry(undefined).unavailableReason();
-    assert.match(why ?? "", /svdPath|SVD_PATH/, "should name the setting");
+  test("gives the reason when no SVD is configured, and stays short", () => {
+    // The how-to-fix moved to JLinkMcpServer.hint, which emits it once a
+    // session. This fires on three tools on every call, so it carries only
+    // the part that is always true and always needed: why the tool returned
+    // nothing. It used to carry the full advice here and repeat it forever.
+    const why = new SvdRegistry(undefined).unavailableReason() ?? "";
+    assert.match(why, /no svd/i, "must still say what is wrong");
+    assert.ok(why.length < 80, `reason repeats on every call, keep it short: ${why.length} chars`);
   });
 
   test("reports a missing file rather than throwing", () => {
