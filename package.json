@@ -112,6 +112,11 @@
         "command": "jlinkMcp.showRttOutput",
         "title": "J-Link MCP: Show RTT Output",
         "category": "J-Link"
+      },
+      {
+        "command": "jlinkMcp.freeProbe",
+        "title": "J-Link: Free the probe (stop the GDB server)",
+        "category": "J-Link MCP"
       }
     ],
     "configuration": {

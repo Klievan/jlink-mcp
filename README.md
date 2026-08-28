@@ -287,6 +287,21 @@ inspection, and stepping by source line rather than by instruction.
 | `probe_command` | Execute raw probe commands |
 | `get_config` | Current probe and server configuration |
 
+## The status bar knows who has the probe
+
+A J-Link serves one client at a time, so a GDB server left running blocks
+everything else — and the usual way that happens is an assistant starting one
+through MCP and nobody noticing. The extension cannot detect that by
+remembering what it did: the MCP server runs in a separate process, so an
+LLM-started server is invisible to it.
+
+So it watches the GDB port instead, which is true whoever is responsible. When
+something is listening the status bar turns amber and says **J-Link: GDB
+server running**; clicking it offers to stop the server and free the probe.
+
+It will not kill a process it cannot identify as a J-Link GDB server. A
+listening port proves something is there, not that it is ours.
+
 ## The skill
 
 The tools tell a model *what it can do*. They do not tell it what is worth
