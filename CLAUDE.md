@@ -1,7 +1,7 @@
 # J-Link MCP Server
 
 VSCode extension and standalone MCP server for SEGGER J-Link debug probes.
-Enables LLM-driven embedded debugging with 44 tools, RTT log streaming, and telnet proxy.
+Enables LLM-driven embedded debugging with 45 tools, RTT log streaming, and telnet proxy.
 
 ## Building
 
@@ -88,7 +88,7 @@ Env vars: `JLINK_DEVICE`, `JLINK_INSTALL_DIR`, `JLINK_INTERFACE`, `JLINK_SPEED`,
 - `src/jlink/gdb-server.ts` - JLinkGDBServer lifecycle management
 - `src/rtt/rtt-client.ts` - RTT telnet client with ANSI stripping and Zephyr log parsing
 - `src/telnet/telnet-proxy.ts` - TCP proxy for Trice/Pigweed detokenizer
-- `src/mcp/server.ts` - MCP server: 44 tools, 4 resources, 4 prompts
+- `src/mcp/server.ts` - MCP server: 45 tools, 4 resources, 4 prompts
 - `src/mcp/standalone.ts` - Standalone entry point (stdio transport, env var config)
 - `src/extension.ts` - VSCode extension: MCP provider, commands, status bar, output channels
 

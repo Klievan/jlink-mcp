@@ -163,7 +163,7 @@ note  SVD — not loaded, so peripheral reads stay raw hex. Set SVD_PATH to a CM
 You do not need your device's exact part number up front. `search_devices`
 searches all 9800 that J-Link supports, by part number, manufacturer, or core.
 
-## Tools (44)
+## Tools (45)
 
 ### Workflow Tools (start here)
 
@@ -391,7 +391,7 @@ src/
 │   ├── blackmagic.ts   # Black Magic Probe implementation
 │   └── factory.ts      # Probe creation from config
 ├── mcp/
-│   ├── server.ts       # MCP server (44 tools, 4 resources, 4 prompts)
+│   ├── server.ts       # MCP server (45 tools, 4 resources, 4 prompts)
 │   └── standalone.ts   # Standalone entry (stdio transport)
 ├── rtt/
 │   └── rtt-client.ts   # RTT client with ANSI stripping + Zephyr log parsing
