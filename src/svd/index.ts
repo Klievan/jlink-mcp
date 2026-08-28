@@ -70,7 +70,10 @@ export class SvdRegistry {
   listPeripherals(filter?: string): SvdPeripheral[] {
     const d = this.getDevice();
     if (!d) return [];
-    const f = filter?.toLowerCase();
+    // Trimmed, because a filter arrives from a model rather than a keyboard
+    // and " i2c " is an easy thing to emit. Untrimmed it matched nothing, and
+    // a no-match answer looks identical to a part that has no such peripheral.
+    const f = filter?.trim().toLowerCase() || undefined;
     return d.peripherals
       .filter((p) => !f || p.name.toLowerCase().includes(f) || (p.groupName ?? "").toLowerCase().includes(f))
       .sort((a, b) => a.baseAddress - b.baseAddress);

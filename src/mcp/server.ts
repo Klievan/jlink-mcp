@@ -508,7 +508,15 @@ export class JLinkMcpServer {
           "Set SVD_PATH (or jlinkMcp.svdPath) to a CMSIS-SVD file for this part to get named fields and decoded values.") }] };
         const list = this.svd.listPeripherals(filter);
         if (list.length === 0) {
-          return { content: [{ type: "text", text: `No peripherals match ${JSON.stringify(filter)}.` }] };
+          // Say what is there. A bare "no match" leaves the caller guessing at
+          // the vocabulary of a part it has never seen, and the guess it makes
+          // is usually the datasheet's name rather than the SVD's — a chip
+          // whose I2C blocks are called TWIM will never answer to "i2c".
+          const all = this.svd.listPeripherals().map((p) => p.name);
+          const shown = all.slice(0, 60).join(", ");
+          return { content: [{ type: "text", text:
+            `No peripherals match ${JSON.stringify(filter)}.\n\n` +
+            `This part has ${all.length}: ${shown}${all.length > 60 ? ", ..." : ""}` }] };
         }
         const dev = this.svd.getDevice();
         const lines = list.map((p) =>
