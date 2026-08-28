@@ -3,7 +3,7 @@
   "name": "io.github.Klievan/jlink-mcp",
   "title": "J-Link MCP",
   "description": "Debug embedded firmware on real hardware: J-Link probes, Cortex-M faults, RTT logs, GDB.",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "websiteUrl": "https://github.com/Klievan/jlink-mcp",
   "repository": {
     "url": "https://github.com/Klievan/jlink-mcp",
@@ -13,7 +13,7 @@
     {
       "registryType": "npm",
       "identifier": "jlink-mcp",
-      "version": "0.6.0",
+      "version": "0.7.0",
       "transport": {
         "type": "stdio"
       },
