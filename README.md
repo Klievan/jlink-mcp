@@ -20,9 +20,9 @@
   <a href="https://github.com/Klievan/jlink-mcp/stargazers"><img src="https://img.shields.io/github/stars/Klievan/jlink-mcp?style=flat-square" alt="GitHub Stars"></a>
   <a href="https://github.com/Klievan/jlink-mcp/blob/main/LICENSE"><img src="https://img.shields.io/github/license/Klievan/jlink-mcp?style=flat-square" alt="License"></a>
   <a href="https://www.npmjs.com/package/jlink-mcp"><img src="https://img.shields.io/npm/v/jlink-mcp?style=flat-square&color=cb0000" alt="npm"></a>
-  <a href="https://www.npmjs.com/package/jlink-mcp"><img src="https://img.shields.io/npm/dt/jlink-mcp?style=flat-square&color=cb0000" alt="npm downloads"></a>
-  <a href="https://marketplace.visualstudio.com/items?itemName=Klievan.jlink-mcp"><img src="https://img.shields.io/visual-studio-marketplace/v/Klievan.jlink-mcp?style=flat-square&label=VSCode" alt="VSCode Marketplace"></a>
-  <a href="https://smithery.ai/server/@Klievan/jlink-mcp"><img src="https://smithery.ai/badge/@Klievan/jlink-mcp" alt="Smithery"></a>
+  <a href="https://www.npmjs.com/package/jlink-mcp"><img src="https://img.shields.io/npm/d18m/jlink-mcp?style=flat-square&color=cb0000" alt="npm downloads"></a>
+  <a href="https://marketplace.visualstudio.com/items?itemName=Klievan.jlink-mcp"><img src="https://img.shields.io/badge/VS%20Code-Marketplace-007ACC?style=flat-square&logo=visualstudiocode&logoColor=white" alt="VS Code Marketplace"></a>
+  <a href="https://github.com/Klievan/jlink-mcp/releases/latest"><img src="https://img.shields.io/github/v/release/Klievan/jlink-mcp?style=flat-square" alt="Latest release"></a>
   <a href="https://modelcontextprotocol.io"><img src="https://img.shields.io/badge/MCP-Compatible-green?style=flat-square" alt="MCP Compatible"></a>
   <a href="https://github.com/Klievan/jlink-mcp/actions/workflows/ci.yml"><img src="https://github.com/Klievan/jlink-mcp/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/Klievan/jlink-mcp/actions/workflows/hil.yml"><img src="https://img.shields.io/badge/tested%20on-real%20nRF52840-brightgreen?style=flat-square" alt="Hardware tested"></a>
