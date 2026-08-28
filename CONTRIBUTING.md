@@ -59,3 +59,17 @@ Two fixtures live in `test/hil/fixture/`:
 Explain what went wrong and how you know, not just what changed. If hardware
 told you something, quote it — the commit log is the only place that evidence
 survives.
+
+
+## Releasing
+
+The order matters, because the MCP registry verifies the npm package exists
+before it will list a version:
+
+1. Bump `package.json`, `server.json` and `.claude-plugin/plugin.json`
+   together — `npm test` fails if they drift.
+2. `npm publish` (2FA: `npm publish --otp=<code>`).
+3. Tag `vX.Y.Z` and push. That triggers the registry publish, which checks npm
+   first and then confirms the listing actually appeared.
+4. Upload the `.vsix` to the VS Code Marketplace — it will not accept a
+   re-upload of an existing version, so a mistake there costs a patch bump.
