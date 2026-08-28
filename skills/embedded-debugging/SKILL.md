@@ -19,9 +19,23 @@ Most sessions are needlessly blind because these were never supplied. Check
 
 ### The ELF gives you names
 
-Without it, `gdb_backtrace` returns frames like `#0 0x00000444 in ?? ()`. You
-get an address and nothing else. With it, you get function names, `file:line`,
-and variable inspection.
+Without it you do not merely lose names — you lose the stack. Measured on an
+nRF52840, the same halted target, one `gdb_load` apart:
+
+```
+# no symbols
+#0  0x00000048 in ?? ()
+
+# after gdb_load
+#0  0x00000048 in rtt_puts (s=s@entry=0x520 "] <") at src/fixture.c:124
+#1  0x000001c2 in log_line (level=0x59b "inf", module=0x54a "hil_fixture",
+                            msg=0x58d "fixture ready") at src/fixture.c:158
+#2  0x000002fa in main () at src/fixture.c:282
+```
+
+One anonymous frame becomes three named ones with arguments and line numbers.
+GDB cannot unwind past the top frame without the debug info, so "the caller"
+is not a question you can even ask until the ELF is loaded.
 
 ```
 gdb_load { elfFile: "build/zephyr/zephyr.elf" }     # symbols only, does not touch flash
@@ -33,7 +47,12 @@ matches the firmware currently on the target; a stale ELF gives confidently
 wrong function names, which is worse than `??`.
 
 Once loaded: `gdb_backtrace`, and `gdb_command` for `info locals`,
-`print myStruct`, `x/16xw &buffer`, `info line *0x444`.
+`print myStruct`, `x/16xw &buffer`, and turning a faulting address into a line:
+
+```
+info line *0x2a4
+Line 91 of "src/fixture.c" starts at address 0x2a4 <main> and ends at 0x2a8 <main+4>.
+```
 
 ### The SVD gives you meanings
 
