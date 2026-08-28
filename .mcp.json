@@ -2,9 +2,11 @@
   "mcpServers": {
     "jlink": {
       "command": "node",
-      "args": ["out/mcp/standalone.js"],
+      "args": [
+        "out/mcp/standalone.js"
+      ],
       "env": {
-        "JLINK_DEVICE": "nRF5340_xxAA_APP"
+        "JLINK_DEVICE": "nRF54LM20B_M33"
       }
     }
   }
