@@ -97,3 +97,73 @@ export async function findGdbServerHolders(port: number): Promise<GdbServerHolde
   }
   return holders;
 }
+
+
+// ── What the status bar says ──────────────────────────────────────
+
+export interface GdbStatus {
+  running: boolean;
+  /** True when this extension started it; false means somebody else did. */
+  startedByExtension: boolean;
+  /** How long we have known it was up, in ms. */
+  elapsedMs: number;
+  /**
+   * False when it was already running the first time we looked, so the
+   * elapsed time is a lower bound rather than an uptime.
+   */
+  observedStart: boolean;
+  device?: string;
+  gdbPort: number;
+  rttListening?: boolean;
+  rttPort?: number;
+}
+
+/** "47m", "2h 5m", "12s" — short enough for a status bar. */
+export function formatDuration(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  return `${Math.floor(m / 60)}h ${m % 60}m`;
+}
+
+/**
+ * Compose the bar text and its tooltip.
+ *
+ * Pure, so the wording is testable without a running VSCode. The text stays
+ * short because VSCode truncates a long status bar item and people come to
+ * resent it; everything else goes in the tooltip, which costs no screen space.
+ *
+ * The distinction the text is built around is who started the server. That is
+ * the entire reported complaint in one word: a session you opened is a session
+ * you remember, and one an assistant opened is the one that gets forgotten.
+ */
+export function renderGdbStatus(st: GdbStatus): { text: string; tooltip: string } {
+  if (!st.running) {
+    return {
+      text: "$(debug-disconnect) J-Link",
+      tooltip: "J-Link MCP — no GDB server running.\n\nThe probe is free. Click for status.",
+    };
+  }
+
+  const who = st.startedByExtension ? "you" : "MCP";
+  const elapsed = formatDuration(st.elapsedMs);
+
+  const lines = [
+    `**GDB server running** — started by ${st.startedByExtension ? "this extension" : "the MCP server (an assistant)"}.`,
+    "",
+    st.observedStart
+      ? `Up ${elapsed}.`
+      // Never claim an uptime we did not watch. If it was already running when
+      // the extension woke up, all we honestly know is how long we have known.
+      : `Known about for ${elapsed} — it was already running when the extension started, so it may be older.`,
+    st.device ? `Device: \`${st.device}\`` : "Device: not configured",
+    `GDB port: ${st.gdbPort}`,
+  ];
+  if (st.rttPort !== undefined) {
+    lines.push(`RTT: ${st.rttListening ? `up on ${st.rttPort}` : "not listening"}`);
+  }
+  lines.push("", "A J-Link serves one client at a time, so this is holding the probe.", "Click to stop it and free the probe.");
+
+  return { text: `$(debug) J-Link · ${who} · ${elapsed}`, tooltip: lines.join("\n") };
+}

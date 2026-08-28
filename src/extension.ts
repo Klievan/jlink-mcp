@@ -5,7 +5,7 @@ import { RTTClient } from "./rtt/rtt-client";
 import { TelnetProxy } from "./telnet/telnet-proxy";
 import { ProcessManager } from "./utils/process-manager";
 import { initLogger, log, logError } from "./utils/logger";
-import { isPortListening, findGdbServerHolders } from "./utils/gdb-server-probe";
+import { isPortListening, findGdbServerHolders, renderGdbStatus } from "./utils/gdb-server-probe";
 import { getConfig } from "./utils/config";
 
 let mcpServer: JLinkMcpServer | undefined;
@@ -18,6 +18,9 @@ let rttOutputChannel: vscode.OutputChannel | undefined;
 let statusBarItem: vscode.StatusBarItem | undefined;
 let gdbWatch: NodeJS.Timeout | undefined;
 let lastGdbRunning: boolean | undefined;
+let gdbFirstSeen: number | undefined;
+let gdbObservedStart = false;
+let lastBarText: string | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
   // Output channels
@@ -215,6 +218,7 @@ export function activate(context: vscode.ExtensionContext) {
       const result = gdbServer!.start();
       if (result.success) {
         vscode.window.showInformationMessage(result.message);
+        lastBarText = undefined;   // force the next poll to redraw
         updateStatusBar(true);
       } else {
         vscode.window.showErrorMessage(result.message);
@@ -341,11 +345,41 @@ export function activate(context: vscode.ExtensionContext) {
 function startGdbServerWatch(context: vscode.ExtensionContext) {
   const port = () => vscode.workspace.getConfiguration("jlinkMcp").get<number>("jlink.gdbPort") ?? 2331;
 
+  const cfg = () => vscode.workspace.getConfiguration("jlinkMcp");
+
   const tick = async () => {
-    const running = await isPortListening(port());
-    if (running === lastGdbRunning) return;   // only redraw on change
+    const gdbPort = port();
+    const running = await isPortListening(gdbPort);
+
+    if (running && gdbFirstSeen === undefined) {
+      gdbFirstSeen = Date.now();
+      // Whether we watched it start decides whether the elapsed time is an
+      // uptime or merely how long we have known. Saying "up 47m" about a
+      // server that was already there when the window opened would be a
+      // guess dressed as a measurement.
+      gdbObservedStart = lastGdbRunning === false;
+    }
+    if (!running) { gdbFirstSeen = undefined; gdbObservedStart = false; }
     lastGdbRunning = running;
-    updateStatusBar(running);
+
+    const rttPort = cfg().get<number>("jlink.rttTelnetPort") ?? 19021;
+    const status = renderGdbStatus({
+      running,
+      startedByExtension: !!gdbServer?.isRunning(),
+      elapsedMs: gdbFirstSeen ? Date.now() - gdbFirstSeen : 0,
+      observedStart: gdbObservedStart,
+      device: cfg().get<string>("jlink.device"),
+      gdbPort,
+      rttPort,
+      rttListening: running ? await isPortListening(rttPort) : false,
+    });
+
+    // Redraw only when the text changes. It changes once a minute while a
+    // server is up, which is the point — the number is what makes someone
+    // notice — but repainting an identical bar three times a minute is not.
+    if (status.text === lastBarText) return;
+    lastBarText = status.text;
+    applyStatus(status, running);
   };
 
   void tick();
@@ -398,6 +432,16 @@ async function offerToFreeProbe() {
   }
   lastGdbRunning = undefined;
   vscode.window.showInformationMessage("Stopped the GDB server; the probe is free.");
+}
+
+function applyStatus(status: { text: string; tooltip: string }, running: boolean) {
+  if (!statusBarItem) return;
+  statusBarItem.text = status.text;
+  statusBarItem.tooltip = new vscode.MarkdownString(status.tooltip);
+  statusBarItem.backgroundColor = running
+    ? new vscode.ThemeColor("statusBarItem.warningBackground")
+    : undefined;
+  statusBarItem.command = running ? "jlinkMcp.freeProbe" : "jlinkMcp.showStatus";
 }
 
 function updateStatusBar(gdbRunning: boolean) {
