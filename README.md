@@ -147,6 +147,29 @@ to your target. [`mcp-config.json`](mcp-config.json) is a config you can paste.
 It registers the server for Copilot Chat, Claude, and any MCP-aware client, so
 there is nothing to configure.
 
+**Nix / NixOS** — run directly from the flake without installing:
+
+```bash
+# Run standalone MCP server
+nix run github:Klievan/jlink-mcp
+
+# Or in an MCP client configuration (e.g. Claude Desktop / Claude Code)
+# "command": "nix", "args": ["run", "github:Klievan/jlink-mcp", "--"]
+```
+
+Or add `jlink-mcp` and `jlink-mcp-skills` to your system configuration or flake:
+
+```nix
+# flake.nix inputs
+inputs.jlink-mcp.url = "github:Klievan/jlink-mcp";
+
+# In your packages:
+inputs.jlink-mcp.packages.''${system}.jlink-mcp
+inputs.jlink-mcp.packages.''${system}.jlink-mcp-skills
+```
+
+> **Note for NixOS users:** Add your preferred probe tools (`segger-jlink` / `segger-jlink-headless`, `openocd`, or `gdb`) to `environment.systemPackages` or your `devShell`. `segger-jlink` requires `nixpkgs.config.allowUnfree = true;` and `services.udev.packages = [ pkgs.segger-jlink ];` for probe USB permissions.
+
 ### Then check it
 
 Ask for `check_setup`. One call, and it says what is missing and what to do:
