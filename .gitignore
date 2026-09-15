@@ -3,3 +3,6 @@ node_modules/
 *.vsix
 .vscode-test/
 out-test/
+
+.direnv
+result

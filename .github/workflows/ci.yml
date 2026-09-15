@@ -30,3 +30,25 @@ jobs:
       # The hardware tier (hil.yml) runs separately on the self-hosted runner.
       - name: Unit tests
         run: npm test
+
+  nix-build:
+    name: Nix flake build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: DeterminateSystems/nix-installer-action@main
+
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+
+      - name: Check flake
+        run: nix flake check --no-build
+
+      - name: Build jlink-mcp package
+        run: nix build .#jlink-mcp -L -o result-jlink-mcp
+
+      - name: Build jlink-mcp-skills package
+        run: nix build .#jlink-mcp-skills -L -o result-skills
+
+      - name: Verify binary is executable
+        run: test -x result-jlink-mcp/bin/jlink-mcp
