@@ -22,6 +22,7 @@ the coverage.
 | `gdb-mi-session-raw.txt` | GDB/MI startup, `continue`, breakpoint stop | **synthetic** |
 | `gdb-mi-error-invalid-register.txt` | GDB/MI -> `info registers PC` | **synthetic** |
 | `rtt-zephyr-stream.txt` | RTT telnet stream, Zephyr logs with ANSI colour | **synthetic** |
+| `jlink-mem-windows.txt` | `JLinkExe` -> `mem 0x58020400, 4` on Windows (prompt-glued line, CRLF) | **captured** 2026-10-09, STM32H723ZG, J-Link V9.82 |
 
 Captured files came off the DK through the HIL tier, which runs with
 `JLINK_MCP_LOG_RAW=1` so the run log carries the exact bytes the parsers

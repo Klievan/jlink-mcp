@@ -355,3 +355,40 @@ describe("readMemory via the GDB bridge", () => {
     assert.match(r.rawOutput, /AB\.\./);
   });
 });
+
+describe("parseMemoryDump — Windows transcript (prompt-glued, CRLF)", () => {
+  // JLinkExe on Windows prints the prompt without a trailing newline, so the
+  // data line arrives glued to it ("J-Link>58020400 = ..."), and stdout line
+  // endings are CRLF. The prompt defeats the anchor and the trailing \r
+  // defeats `$`, so every mem-based tool reported "could not read" there while
+  // the same reads parsed on LF checkouts. This transcript is the capture from
+  // a real Windows box (STM32H723ZG, J-Link V9.82).
+  const win = golden("jlink-mem-windows.txt");
+
+  test("the fixture still carries the traits it exists for", () => {
+    // If this fails, a checkout or renormalize rewrote the fixture's line
+    // endings and silently removed the coverage it is here for (see
+    // .gitattributes).
+    assert.ok(win.includes("\r\n"), "fixture must keep its CRLF line endings");
+    assert.match(win, /J-Link>58020400 = BF EA AA A9/, "fixture must keep the prompt glue");
+  });
+
+  test("parses the prompt-glued line", () => {
+    const dump = probe.parseMemoryDump(win);
+    assert.equal(dump.length, 1, "exactly the one dump line; nothing else must match");
+    assert.equal(dump[0].address, "0x58020400");
+    assert.equal(dump[0].hex, "BF EA AA A9");
+    assert.equal(dump[0].ascii, "....");
+  });
+
+  test("decodes to the value the hardware read returned", () => {
+    const dump = probe.parseMemoryDump(win);
+    assert.equal(parseLittleEndian32(dump[0].hex.split(/\s+/), 0), 0xa9aaeabf);
+  });
+
+  test("a CRLF line with no ASCII column parses too", () => {
+    const dump = probe.parseMemoryDump("J-Link>20000000 = DE AD BE EF\r\n");
+    assert.equal(dump.length, 1);
+    assert.equal(dump[0].hex, "DE AD BE EF");
+  });
+});
