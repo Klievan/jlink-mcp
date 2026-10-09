@@ -509,16 +509,28 @@ export abstract class ProbeBackend {
    * `readFaultRegisters` short of its 16-byte minimum and reporting
    * CFSR/HFSR/MMFAR/BFAR as all-zero — i.e. "no faults detected" on a live
    * crash.
+   *
+   * Windows adds two more ways to lose the same line. JLinkExe there prints its
+   * prompt without a trailing newline, so the first line of a command's output
+   * arrives glued to it:
+   *
+   *     J-Link>58020400 = BF EA AA A9                                       ....
+   *
+   * and stdout line endings are CRLF, where the trailing \r defeats the `$`
+   * anchor because `.` does not match \r in JavaScript. Tolerate the prompt and
+   * split on /\r?\n/; neither trait appears on LF checkouts, so behaviour there
+   * is unchanged.
    */
   parseMemoryDump(raw: string): MemoryDumpLine[] {
     const results: MemoryDumpLine[] = [];
     const HEX_RUN = String.raw`((?:[0-9A-Fa-f]{2}\s+)*[0-9A-Fa-f]{2})`;
-    // J-Link format: "E000ED28 = 00 00 00 00 ..."
-    const jlinkRe = new RegExp(String.raw`^([0-9A-Fa-f]{8})\s*=\s*${HEX_RUN}(?:\s{2,}(.*))?$`);
+    // J-Link format: "E000ED28 = 00 00 00 00 ...", possibly with the prompt
+    // glued to the front on Windows: "J-Link>E000ED28 = 00 00 00 00 ..."
+    const jlinkRe = new RegExp(String.raw`^(?:J-Link>)?([0-9A-Fa-f]{8})\s*=\s*${HEX_RUN}(?:\s{2,}(.*))?$`);
     // OpenOCD / GDB format: "0xe000ed28: 00 00 00 00 ..."
     const ocdRe = new RegExp(String.raw`^(0x[0-9a-fA-F]+)\s*:\s*${HEX_RUN}(?:\s{2,}(.*))?$`);
 
-    for (const line of raw.split("\n")) {
+    for (const line of raw.split(/\r?\n/)) {
       const jlinkMatch = line.match(jlinkRe);
       if (jlinkMatch) {
         results.push({ address: `0x${jlinkMatch[1]}`, hex: jlinkMatch[2].trim(), ascii: (jlinkMatch[3] || "").trim() });

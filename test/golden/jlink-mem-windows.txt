@@ -1,0 +1,53 @@
+SEGGER J-Link Commander V9.82 (Compiled Sep 30 2026 12:54:00)
+DLL version V9.82, compiled Sep 30 2026 12:52:58
+
+Connecting to J-Link ...O.K.
+Firmware: J-Link V9 compiled May  7 2021 16:26:12
+Hardware version: V9.70
+J-Link uptime (since boot): N/A (Not supported by this model)
+S/N: 150710994
+License(s): RDI,FlashBP,FlashDL,JFlash,GDB
+VTref=3.283V
+Device "STM32H723ZG" selected.
+
+
+Connecting to target via SWD
+ConfigTargetSettings() start
+ConfigTargetSettings() end - Took 12us
+InitTarget() start
+SWD selected. Executing JTAG -> SWD switching sequence.
+DAP initialized successfully.
+InitTarget() end - Took 7.70ms
+Found SW-DP with ID 0x6BA02477
+DPIDR: 0x6BA02477
+CoreSight SoC-400 or earlier
+Scanning AP map to find all available APs
+AP[3]: Stopped AP scan as end of AP map has been reached
+AP[0]: AHB-AP (IDR: 0x84770001, ADDR: 0x00000000)
+AP[1]: AHB-AP (IDR: 0x84770001, ADDR: 0x01000000)
+AP[2]: APB-AP (IDR: 0x54770002, ADDR: 0x02000000)
+Iterating through AP map to find AHB-AP to use
+AP[0]: Core found
+AP[0]: AHB-AP ROM base: 0xE00FE000
+CPUID register: 0x411FC272. Implementer code: 0x41 (ARM)
+Cache: L1 I/D-cache present
+Found Cortex-M7 r1p2, Little endian.
+FPUnit: 8 code (BP) slots and 0 literal slots
+CoreSight components:
+ROMTbl[0] @ E00FE000
+[0][0]: E00FF000 CID B105100D PID 000BB4C7 ROM Table
+ROMTbl[1] @ E00FF000
+[1][0]: E000E000 CID B105E00D PID 000BB00C SCS-M7
+[1][1]: E0001000 CID B105E00D PID 000BB002 DWT
+[1][2]: E0002000 CID B105E00D PID 000BB00E FPB-M7
+[1][3]: E0000000 CID B105E00D PID 000BB001 ITM
+[0][1]: E0041000 CID B105900D PID 001BB975 ETM-M7
+[0][2]: E0043000 CID B105900D PID 004BB906 CTI
+I-Cache L1: 32 KB, 512 Sets, 32 Bytes/Line, 2-Way
+D-Cache L1: 32 KB, 256 Sets, 32 Bytes/Line, 4-Way
+Memory zones:
+  Zone: "Default" Description: Default access mode
+Cortex-M7 identified.
+J-Link>58020400 = BF EA AA A9                                       ....
+J-Link>OnDisconnectTarget() start
+OnDisconnectTarget() end - Took 845us

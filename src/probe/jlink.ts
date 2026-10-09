@@ -41,20 +41,31 @@ const GDB_SERVER_PROCESS = "jlink-gdb-server";
 // Lines that are JLink connection boilerplate
 const BOILERPLATE_PATTERNS = [
   /^SEGGER J-Link Commander/, /^DLL version/, /^J-Link Commander will now exit/,
-  /^Connecting to J-Link via USB/, /^Firmware: J-Link/, /^Hardware version:/,
+  /^Connecting to J-Link/, /^Firmware: J-Link/, /^Hardware version:/,
   /^J-Link uptime/, /^S\/N:/, /^License\(s\):/, /^USB speed mode:/, /^VTref=/,
   /^Device ".*" selected/, /^Connecting to target via SWD/, /^Connecting to target via JTAG/,
   /^ConfigTargetSettings\(\)/, /^InitTarget\(\)/, /^Found SW-DP with ID/, /^DPIDR:/,
   /^CoreSight/, /^AP map detection/, /^AP\[\d+\]:/, /^CPUID register:/,
   /^Feature set:/, /^Cache:/, /^Found Cortex-/, /^FPUnit:/,
   /^Security extension: /, /^Secure debug:/, /^ROMTbl\[\d+\]/, /^\[\d+\]\[\d+\]:/,
-  /^Memory zones:/, /^\s+Zone:/, /^Cortex-M\d+ identified/, /^Type "connect"/,
-  /^Please specify/, /^Specify target/, /^$/, /^J-Link>/, /^J-Link\[\d+\]:/,
+  /^Memory zones:/, /^\s*Zone:/, /^Cortex-M\d+ identified/, /^Type "connect"/,
+  /^Please specify/, /^Specify target/, /^$/, /^J-Link\[\d+\]:/,
+  /^SWD selected\./, /^DAP initialized/, /^Scanning AP map/, /^Iterating through AP map/,
+  /^I-Cache L1:/, /^D-Cache L1:/, /^OnDisconnectTarget\(\)/,
   /^Syntax:/, /^Sleep\(\d+\)/, /^Script processing completed/,
 ];
 
-function stripBoilerplate(raw: string): string {
-  return raw.split("\n")
+/**
+ * Strip JLink connection boilerplate from output, keeping the data.
+ *
+ * On Windows the prompt is printed without a trailing newline, so the data
+ * line arrives glued: "J-Link>58020400 = ...". Matching that prefix as a
+ * whole-line boilerplate pattern dropped the reading itself from `output`;
+ * strip the prompt, then judge what remains.
+ */
+export function stripBoilerplate(raw: string): string {
+  return raw.split(/\r?\n/)
+    .map((line) => line.replace(/^J-Link>/, ""))
     .filter((line) => {
       const t = line.trim();
       return t && !BOILERPLATE_PATTERNS.some((p) => p.test(t));

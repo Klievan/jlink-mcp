@@ -1,0 +1,6 @@
+# Golden transcripts are inputs, not artifacts: the unit tier replays their
+# exact bytes. On Windows that includes the line endings — the capture below
+# is a Windows one, and its CRLF (and the prompt glued to the data line) is
+# half of what it exists to cover. Pin it against end-of-line conversion on
+# every platform.
+test/golden/jlink-mem-windows.txt -text
