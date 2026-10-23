@@ -352,6 +352,12 @@ export abstract class ProbeBackend {
   /** Set the target device at runtime (no restart needed) */
   abstract setDevice(device: string): void;
 
+  /** Get configured probe serial number, if any */
+  getSerialNumber(): string | undefined { return undefined; }
+
+  /** Set probe serial number at runtime (for multi-probe setups) */
+  setSerialNumber(_serialNumber: string | undefined): void { /* unsupported by default */ }
+
   /** List connected probes / scan for devices. Returns human-readable text. */
   abstract listDevices(): Promise<CommandResult>;
 

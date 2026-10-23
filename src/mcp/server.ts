@@ -87,10 +87,12 @@ export class JLinkMcpServer {
       {},
       async () => {
         const result = await probe.listDevices();
+        const sn = probe.getSerialNumber();
         const lines = [
           `Probe: ${probe.displayName}`,
           `Currently configured device: ${probe.getDeviceName()}`,
           `Device configured: ${probe.isDeviceConfigured() ? "Yes" : "NO - use set_device to configure"}`,
+          `Configured probe serial: ${sn || "Not set (auto-connect if single probe)"}`,
           "",
           "--- Scan Results ---",
           result.output || result.rawOutput || "(no output)",
@@ -121,27 +123,29 @@ export class JLinkMcpServer {
         if (install.ok) {
           const scan = await probe.listDevices();
 
-          // Require the success line rather than hunting for failure strings.
-          // But allow for what J-Link actually puts between the two halves,
-          // which is not always nothing:
-          //
-          //   Connecting to J-Link ...O.K.              (hardware runner)
-          //   Connecting to J-Link via USB...O.K.       (laptop, same probe)
-          //
-          // The first version of this check matched only the first form —
-          // built from the one sample I had — and so reported "probe: none
-          // detected" on a working probe that the very next call read a full
-          // register set from. Swapping failure-matching for success-matching
-          // was right; deriving the success pattern from a single machine was
-          // the same error wearing a different hat.
-          const found = /connecting to j-link\b[^\n]*?O\.K\./i.test(scan.rawOutput || scan.output);
+          // Require either the success connection line or probe enumeration entries (ShowEmuList)
+          const hasOk = /connecting to j-link\b[^\n]*?O\.K\./i.test(scan.rawOutput || scan.output);
+          const hasProbes = /j-link\[\d+\]/i.test(scan.rawOutput || scan.output);
+          const found = hasOk || hasProbes;
           const why = (scan.rawOutput || scan.output).split("\n")
             .find((l) => /fail|error|cannot/i.test(l))?.trim();
-          lines.push(found
-            ? `OK    probe — connected`
-            : `BLOCK probe — none detected${why ? ` (${why})` : ""}. Check the USB cable, and that no ` +
+
+          if (found) {
+            const probeMatches = (scan.output || scan.rawOutput).match(/j-link\[\d+\]/gi);
+            const count = probeMatches ? probeMatches.length : 1;
+            const sn = probe.getSerialNumber();
+            if (count > 1 && !sn) {
+              lines.push(`OK    probe — ${count} probes detected. Set target probe with set_serial_number.`);
+            } else if (sn) {
+              lines.push(`OK    probe — connected (serial: ${sn})`);
+            } else {
+              lines.push(`OK    probe — connected`);
+            }
+          } else {
+            lines.push(`BLOCK probe — none detected${why ? ` (${why})` : ""}. Check the USB cable, and that no ` +
               `other tool holds it — a J-Link serves one client at a time.`);
-          blocked ||= !found;
+            blocked = true;
+          }
         }
 
         const device = probe.getDeviceName();
@@ -267,6 +271,21 @@ export class JLinkMcpServer {
       async ({ device }) => {
         probe.setDevice(device);
         return { content: [{ type: "text", text: `Device set to "${device}". You can now use all debugging tools.` }] };
+      }
+    );
+
+    this.server.tool(
+      "set_serial_number",
+      "Set the debug probe serial number at runtime. Required when multiple probes are connected to select which one to communicate with. Run list_devices to see connected serial numbers.",
+      {
+        serialNumber: z.string().describe("Probe serial number from list_devices (e.g. '776287991'), or empty string to clear"),
+      },
+      async ({ serialNumber }) => {
+        const sn = serialNumber.trim();
+        probe.setSerialNumber(sn || undefined);
+        return { content: [{ type: "text", text: sn
+          ? `Probe serial number set to "${sn}". Subsequent operations will target this probe.`
+          : "Probe serial number cleared. Probe will auto-select if only one is connected." }] };
       }
     );
 
@@ -1295,6 +1314,7 @@ export class JLinkMcpServer {
           displayName: probe.displayName,
           device: probe.getDeviceName(),
           deviceConfigured: probe.isDeviceConfigured(),
+          serialNumber: probe.getSerialNumber(),
           supportsRTT: probe.supportsRTT(),
           gdbServer: probe.getGDBServerStatus(),
         }, null, 2) }] };

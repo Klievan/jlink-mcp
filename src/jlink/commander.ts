@@ -51,7 +51,6 @@ const BOILERPLATE_PATTERNS = [
   /^Specify target/,
   /^$/, // blank lines
   /^J-Link>/, // prompt
-  /^J-Link\[\d+\]:/,
   /^Syntax:/,
   /^Sleep\(\d+\)/,
   /^Script processing completed/,
