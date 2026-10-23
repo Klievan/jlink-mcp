@@ -51,7 +51,7 @@ describe("deciding whether a probe is attached", () => {
   // which matched none of them. Both samples below are verbatim from real
   // runs — one from the hardware runner, one from a laptop with nothing
   // plugged in.
-  const connected = /connecting to j-link\b[^\n]*?O\.K\./i;
+  const connected = /connecting to j-link\b[^\n]*?O\.K\.|j-link\[\d+\]/i;
 
   // Every string below is verbatim from a real run. The first version of this
   // check was written from one of them and shipped a false "no probe" on a
@@ -64,6 +64,13 @@ describe("deciding whether a probe is attached", () => {
     // J-Link says "via USB" here and not on the runner. Nothing about the
     // probe changed; only the sentence did.
     assert.equal(connected.test("Connecting to J-Link via USB...O.K."), true);
+  });
+
+  test("recognises probes enumerated by ShowEmuList when multiple probes are plugged in", () => {
+    const multi = `Connecting to J-Link ...FAILED: Cannot connect to the probe/programmer.
+J-Link[0]: Connection: USB, Serial number: 776287991, ProductName: J-Link STLink, Nickname: <not set>
+J-Link[1]: Connection: USB, Serial number: 777971011, ProductName: J-Link STLink, Nickname: <not set>`;
+    assert.equal(connected.test(multi), true);
   });
 
   test("does not read a wedged USB connection as a probe", () => {

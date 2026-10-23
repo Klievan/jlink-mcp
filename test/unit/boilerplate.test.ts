@@ -40,4 +40,19 @@ describe("stripBoilerplate — the Windows transcript", () => {
     const lf = "10000000 = 00 01 02 03\nE000ED28 = 00 82 00 00";
     assert.equal(stripBoilerplate(lf), lf);
   });
+
+  test("preserves ShowEmuList probe enumeration lines", () => {
+    const emuList = `SEGGER J-Link Commander V9.70 (Compiled Aug 19 2026 12:16:13)
+DLL version V9.70, compiled Aug 19 2026 12:15:25
+
+Connecting to J-Link ...FAILED: Cannot connect to the probe/programmer.
+J-Link>J-Link[0]: Connection: USB, Serial number: 776287991, ProductName: J-Link STLink, Nickname: <not set>
+J-Link[1]: Connection: USB, Serial number: 777971011, ProductName: J-Link STLink, Nickname: <not set>
+J-Link>`;
+    const stripped = stripBoilerplate(emuList);
+    assert.match(stripped, /J-Link\[0\]: Connection: USB, Serial number: 776287991/);
+    assert.match(stripped, /J-Link\[1\]: Connection: USB, Serial number: 777971011/);
+    assert.ok(!stripped.includes("Connecting to J-Link ...FAILED"));
+    assert.ok(!stripped.includes("SEGGER J-Link Commander"));
+  });
 });

@@ -49,7 +49,7 @@ const BOILERPLATE_PATTERNS = [
   /^Feature set:/, /^Cache:/, /^Found Cortex-/, /^FPUnit:/,
   /^Security extension: /, /^Secure debug:/, /^ROMTbl\[\d+\]/, /^\[\d+\]\[\d+\]:/,
   /^Memory zones:/, /^\s*Zone:/, /^Cortex-M\d+ identified/, /^Type "connect"/,
-  /^Please specify/, /^Specify target/, /^$/, /^J-Link\[\d+\]:/,
+  /^Please specify/, /^Specify target/, /^$/,
   /^SWD selected\./, /^DAP initialized/, /^Scanning AP map/, /^Iterating through AP map/,
   /^I-Cache L1:/, /^D-Cache L1:/, /^OnDisconnectTarget\(\)/,
   /^Syntax:/, /^Sleep\(\d+\)/, /^Script processing completed/,
@@ -855,6 +855,16 @@ export class JLinkBackend extends ProbeBackend {
     this.config.device = device;
   }
 
+  getSerialNumber(): string | undefined {
+    return this.config.serialNumber;
+  }
+
+  setSerialNumber(serialNumber: string | undefined): void {
+    const cleaned = serialNumber?.trim();
+    this.config.serialNumber = cleaned ? cleaned : undefined;
+    log(`[J-Link] Probe serial number set to ${this.config.serialNumber ?? "(cleared)"}`);
+  }
+
   /**
    * Point the server at the firmware's RTT control block at runtime.
    *
@@ -875,17 +885,22 @@ export class JLinkBackend extends ProbeBackend {
     return new Promise<CommandResult>((resolve) => {
       const proc = spawn(this.jlinkExe, args, { stdio: ["pipe", "pipe", "pipe"] });
       let stdout = "", stderr = "";
+      const timer = setTimeout(() => {
+        proc.kill("SIGTERM");
+        resolve({ success: false, rawOutput: stdout, output: stdout, error: "Timed out" });
+      }, 10000);
       proc.stdout?.on("data", (d: Buffer) => { stdout += d.toString(); });
       proc.stderr?.on("data", (d: Buffer) => { stderr += d.toString(); });
       proc.stdin?.write("ShowEmuList\nexit\n");
       proc.stdin?.end();
       proc.on("error", (err) => {
+        clearTimeout(timer);
         resolve({ success: false, rawOutput: stdout, output: stdout, error: `Failed to run JLinkExe: ${err.message}` });
       });
       proc.on("exit", (code) => {
+        clearTimeout(timer);
         resolve({ success: code === 0, rawOutput: stdout, output: stripBoilerplate(stdout), error: stderr || undefined });
       });
-      setTimeout(() => { proc.kill("SIGTERM"); resolve({ success: false, rawOutput: stdout, output: stdout, error: "Timed out" }); }, 10000);
     });
   }
 

@@ -186,7 +186,7 @@ note  SVD — not loaded, so peripheral reads stay raw hex. Set SVD_PATH to a CM
 You do not need your device's exact part number up front. `search_devices`
 searches all 9800 that J-Link supports, by part number, manufacturer, or core.
 
-## Tools (47)
+## Tools (48)
 
 ### Workflow Tools (start here)
 
@@ -202,6 +202,7 @@ searches all 9800 that J-Link supports, by part number, manufacturer, or core.
 |------|-------------|
 | `list_devices` | Scan for connected probes and show the configured target |
 | `set_device` | Change the target device at runtime — no restart needed |
+| `set_serial_number` | Change the probe serial number at runtime (for multi-probe setups) |
 | `get_config` | Current probe, target device, and GDB server state |
 
 ### Device Control
