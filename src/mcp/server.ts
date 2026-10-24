@@ -135,7 +135,8 @@ export class JLinkMcpServer {
             const count = probeMatches ? probeMatches.length : 1;
             const sn = probe.getSerialNumber();
             if (count > 1 && !sn) {
-              lines.push(`OK    probe — ${count} probes detected. Set target probe with set_serial_number.`);
+              lines.push(`BLOCK probe — ${count} probes detected. Select target probe with set_serial_number.`);
+              blocked = true;
             } else if (sn) {
               lines.push(`OK    probe — connected (serial: ${sn})`);
             } else {
