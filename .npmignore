@@ -31,3 +31,8 @@ CONTRIBUTING.md
 # is built from .vscodeignore and unaffected by this file; an npm consumer
 # never reads it. 1.5 MB.
 logo.png
+
+# Nix packaging — for building from source, not for consumers.
+flake.nix
+flake.lock
+.envrc

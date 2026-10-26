@@ -24,3 +24,8 @@ demo/**
 timing-tmp.js
 test/fixtures/**
 CONTRIBUTING.md
+
+# Nix packaging — for building from source, not for consumers.
+flake.nix
+flake.lock
+.envrc

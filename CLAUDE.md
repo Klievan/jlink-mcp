@@ -13,7 +13,7 @@ npm run compile
 ## Testing
 
 ```bash
-npm test          # unit tier: ~187 tests, seconds, no hardware
+npm test          # unit tier: ~330 tests, seconds, no hardware
 npm run test:hil  # hardware tier: needs HIL=1 and a real probe; skips otherwise
 ```
 
