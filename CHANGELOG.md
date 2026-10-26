@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.8.0
+
+The first release built mostly by other people. Thanks to Dirk Van Haerenborgh
+(@vhdirk) and dingxueyang (@HcIpxZerg) for finding these on setups this
+project had never been run on: Windows, NixOS, and benches with more than one
+probe plugged in.
+
+### Added
+
+- **`set_serial_number`**, which picks a probe at runtime when several are
+  attached. `get_config` and `list_devices` now report the selected serial.
+  (@vhdirk, #94)
+- **Nix flake**: `nix run github:Klievan/jlink-mcp`, plus `jlink-mcp` and
+  `jlink-mcp-skills` packages and a CI step that builds them. (@vhdirk, #91)
+
+### Fixed
+
+- **Every mem-based tool said "could not read" on Windows.** JLinkExe there
+  glues its prompt onto the first output line and ends lines with CRLF, and
+  either one alone was enough to hide the dump from the parser. That broke
+  `read_peripheral`, `decode_register`, and the stack and fault sections of
+  `snapshot` and `diagnose_crash`. Register tools match mid-line, so they kept
+  working, which made the failure look specific to peripherals. The raw
+  Windows capture is now a golden transcript. (@HcIpxZerg, #93)
+- **With two probes attached, `check_setup` reported no probe at all.** The
+  boilerplate filter stripped the `J-Link[0]: ...` lines that ShowEmuList uses
+  to list probes, and JLinkExe cannot auto-connect without a GUI to choose
+  between them. It now counts them and reports BLOCK until `set_serial_number`
+  selects one. (@vhdirk, #94)
+- `list_devices` had no timeout, so it could hang for as long as JLinkExe
+  did. It gives up after 10 s now. (@vhdirk, #94)
+
 ## 0.7.0
 
 Three rounds of pointing a fresh agent at real hardware and reading its
