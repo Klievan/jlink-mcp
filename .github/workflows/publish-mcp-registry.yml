@@ -86,8 +86,10 @@ jobs:
           name=$(node -p "require('./server.json').name")
           want=$(node -p "require('./server.json').version")
           for i in $(seq 1 10); do
+            # The registry lists every published version, oldest first, so
+            # look for ours rather than taking whichever comes back first.
             got=$(curl -fsSL "https://registry.modelcontextprotocol.io/v0/servers?search=${name}" \
-              | jq -r --arg n "$name" '.servers[] | select(.server.name==$n) | .server.version' | head -1)
+              | jq -r --arg n "$name" --arg w "$want" '.servers[] | select(.server.name==$n and .server.version==$w) | .server.version' | head -1)
             if [ "$got" = "$want" ]; then
               echo "listed: $name $got"
               exit 0
