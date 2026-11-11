@@ -225,21 +225,29 @@ export class GDBClient {
           if (this.outputBuffer.includes("(gdb)")) {
             clearInterval(checkInterval);
             this.outputBuffer = "";
+            // Asynchronous MI lets GDB accept commands while the target runs,
+            // and is what lets `interrupt` stop it.
+            //
+            // It has to go out before `target remote`. Sent afterwards it is
+            // accepted and silently ignored: GDB will not switch an already
+            // connected synchronous remote into async mode, and
+            // `-gdb-show mi-async` then reads back "off".
+            //
+            // Observed on hardware as a halt that never arrived — setting it
+            // after connecting left async off in every attempt and `interrupt`
+            // could not stop the target; setting it first, async stayed on and
+            // the same interrupt worked.
+            this.sendCommand("-gdb-set mi-async on", 5000).catch(() => "").then(() => {
             // Now send the connect command
             this.sendCommand(`target remote ${host}:${port}`, 15000).then(async (connectResult) => {
               if (connectResult.includes("Remote debugging") || connectResult.includes("connected") || connectResult.includes("stopped")) {
                 this.connected = true;
                 this.lastConnectParams = { host, port, elfFile };
-                // Asynchronous MI lets GDB accept commands while the target
-                // runs, and lets `interrupt` actually stop it. Without this,
-                // querying a running target blocks until our timeout and the
-                // caller gets an empty response — which reads as a healthy
-                // but silent target rather than as a state mismatch.
-                await this.sendCommand("set mi-async on", 5000).catch(() => "");
                 resolve({ success: true, output: `Connected to GDB server at ${host}:${port}\n${this.cleanMI(connectResult)}` });
               } else {
                 resolve({ success: false, output: this.cleanMI(connectResult), error: "Failed to connect to GDB server" });
               }
+            });
             });
           }
         }, 100);
@@ -321,17 +329,25 @@ export class GDBClient {
     // Detect if this is a "run" command that will make the target execute
     const isRunCommand = /^(continue|c|step|s|stepi|si|next|n|nexti|ni|finish|until|advance|run|r)\b/i.test(cmd.trim());
 
-    // NOTE on `interrupt`: in mi2 without async-exec the CLI `interrupt`
-    // and MI `-exec-interrupt` are both effectively no-ops (`-exec-interrupt`
-    // requires async mode). Callers who need to stop a running target
-    // through this MCP should use the `halt` tool or send
-    // `monitor halt` — both go through the JLinkGDBServer monitor
-    // command channel, which bypasses GDB's execution state machine.
-    // Enabling `mi-async` at connect time to make interrupt work
-    // natively is deferred to a follow-up (it interacts with the
-    // response-detection state machine and needs care).
+    // A bare `continue` blocks GDB even in async mode, and a blocked GDB
+    // cannot be interrupted — which is the whole reason async was turned on.
+    // The MI form does not block: it answers `^running` and leaves GDB reading
+    // stdin, so `-exec-interrupt` can still reach it.
+    //
+    // Observed on hardware across all four combinations: the interrupt stopped
+    // the target only with async set before connecting and the resume issued as
+    // `-exec-continue`. With a CLI `continue` it never stopped, async on or
+    // off. So the two are coupled — changing only `interrupt()` leaves it
+    // unable to stop anything.
+    //
+    // Only the plain resume is translated. The stepping commands keep their
+    // CLI form: they stop on their own, so a caller is not left needing an
+    // interrupt, and their console output is what callers already parse.
+    const resumeOnly = /^(continue|c)\s*$/i.test(cmd.trim());
+    const wire = resumeOnly ? "-exec-continue" : cmd;
+
     this.stopEvent = null;
-    const rawOutput = await this.sendCommand(cmd, isRunCommand ? timeout : 10000, isRunCommand);
+    const rawOutput = await this.sendCommand(wire, isRunCommand ? timeout : 10000, isRunCommand);
     logRaw("gdb", cmd, rawOutput);
     const output = this.cleanMI(rawOutput);
 
@@ -463,12 +479,20 @@ export class GDBClient {
   /**
    * Stop a running target.
    *
-   * Sends SIGINT to the GDB process rather than a command on stdin. With a
-   * synchronous remote — which is what the J-Link GDB Server gives us — GDB
-   * blocks in its resume loop while the target executes and does not read
-   * stdin, so `interrupt` and `monitor halt` typed as commands are never seen.
-   * SIGINT is the only channel GDB is still listening on, and it forwards the
-   * interrupt to the remote.
+   * `-exec-interrupt` over stdin is the primary path, and the only one that
+   * works on every platform. `connect()` enables `set mi-async on`, so MI
+   * accepts commands while the target executes — the older claim that GDB
+   * never reads stdin during a resume held only before async mode was turned
+   * on, and is no longer true here.
+   *
+   * SIGINT stays as a POSIX-only fallback for the case where async mode did
+   * not take, and is deliberately not attempted on Windows. Node has no POSIX
+   * signals there and maps `proc.kill("SIGINT")` onto `TerminateProcess`, so
+   * it ends the GDB client rather than interrupting the target: the caller
+   * then sees this function time out and has no GDB process left, which reads
+   * as "the target would not stop" when the debugger is what died. Observed on
+   * hardware as a halt that reported a stubborn target every time while
+   * `isConnected()` came back false immediately afterwards.
    */
   async interrupt(timeout: number = 5000): Promise<GDBResponse> {
     if (!this.proc || !this.connected) {
@@ -479,13 +503,48 @@ export class GDBClient {
     }
 
     this.stopEvent = null;
-    log("[GDB] Interrupting target with SIGINT");
+    log("[GDB] Interrupting target with -exec-interrupt");
+    try {
+      await this.sendCommand("-exec-interrupt", Math.min(2000, timeout));
+    } catch {
+      // The write itself failed. Fall through: the wait below still gives the
+      // target its chance to stop, and the POSIX fallback covers the rest.
+    }
+
+    const viaMi = await this.waitForStop(timeout);
+    if (viaMi) return viaMi;
+
+    if (process.platform === "win32") {
+      return {
+        success: false,
+        output: "",
+        error:
+          "Target did not stop after -exec-interrupt. SIGINT is not attempted on " +
+          "Windows: Node maps it onto TerminateProcess, which would end the GDB " +
+          "client instead of interrupting the target. Reconnect to halt instead — " +
+          "`target remote` halts on attach.",
+      };
+    }
+
+    log("[GDB] -exec-interrupt did not stop the target; falling back to SIGINT");
     try {
       this.proc.kill("SIGINT");
     } catch (e: any) {
       return { success: false, output: "", error: `Failed to signal GDB: ${e.message}` };
     }
 
+    const viaSignal = await this.waitForStop(timeout);
+    if (viaSignal) return viaSignal;
+
+    return {
+      success: false,
+      output: "",
+      error: "Target did not stop within timeout after -exec-interrupt and SIGINT",
+    };
+  }
+
+  /** Poll until the target reports stopped, or the budget runs out. */
+  private async waitForStop(timeout: number): Promise<GDBResponse | null> {
     const started = Date.now();
     while (Date.now() - started < timeout) {
       if (!this.targetRunning) {
@@ -495,7 +554,7 @@ export class GDBClient {
       }
       await new Promise((r) => setTimeout(r, 50));
     }
-    return { success: false, output: "", error: "Target did not stop within timeout after SIGINT" };
+    return null;
   }
 
   /** Check if connected */
